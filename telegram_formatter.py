@@ -1,5 +1,5 @@
 """
-김째매매법 텔레그램 알림 메시지 포맷터 (Telegram Formatter)
+변형티큐법 텔레그램 알림 메시지 포맷터 (Telegram Formatter)
 원본 Pine Script v6의 HTML 태그(<b>, <u>), 포지션 섹션(alertPositionSection),
 D7 단기채/현금 배분, ER10/20/59, 익일 QQQ 기준가, T3 금리·달러 요약을 구성합니다.
 """
@@ -157,12 +157,12 @@ def format_telegram_message(
 
     if snap.phase == "FINAL":
         header = (
-            f"🚨 <b>[김째매매법] 2차(FINAL) 확정 신호 변경</b>\n"
+            f"🚨 <b>[변형티큐법] 2차(FINAL) 확정 신호 변경</b>\n"
             f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
         )
     else:
         header = (
-            f"📊 <b>[김째매매법] 1차(PRIMARY) 마감 판정</b>\n"
+            f"📊 <b>[변형티큐법] 1차(PRIMARY) 마감 판정</b>\n"
             f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
         )
 

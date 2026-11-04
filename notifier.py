@@ -46,7 +46,7 @@ def send_telegram_message(
 
     chat_ids: List[str] = [cid.strip() for cid in raw_chat_ids.split(",") if cid.strip()]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    all_ok = True
+    success_count = 0
 
     for cid in chat_ids:
         payload = {
@@ -66,14 +66,17 @@ def send_telegram_message(
                 }
                 resp2 = requests.post(url, json=fallback_payload, timeout=15)
                 if resp2.status_code != 200:
-                    logger.error(f"텔레그램 발송 최종 실패 (chat_id={cid}, status={resp2.status_code}): {resp2.text}")
-                    all_ok = False
+                    logger.error(
+                        f"텔레그램 발송 실패 (chat_id={cid}, status={resp2.status_code}): {resp2.text} "
+                        f"-> 수신자가 봇 대화방에서 [시작(/start)] 버튼을 눌렀는지, 숫자 ID가 맞는지 확인해 주세요."
+                    )
                 else:
                     logger.info(f"텔레그램 일반 텍스트 폴백 발송 성공 (chat_id={cid})")
+                    success_count += 1
             else:
                 logger.info(f"텔레그램 발송 성공 (chat_id={cid})")
+                success_count += 1
         except Exception as e:
             logger.error(f"텔레그램 API 호출 중 예외 발생 (chat_id={cid}): {e}")
-            all_ok = False
 
-    return all_ok
+    return success_count > 0
