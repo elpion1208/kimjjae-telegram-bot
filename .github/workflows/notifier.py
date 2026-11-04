@@ -6,10 +6,17 @@
 from __future__ import annotations
 import logging
 import os
+import re
 from typing import List
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_html_tags(text: str) -> str:
+    cleaned = re.sub(r"</?(b|u|i)>", "", text)
+    cleaned = cleaned.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    return cleaned
 
 
 def send_telegram_message(
@@ -30,10 +37,12 @@ def send_telegram_message(
         return True
 
     if not token or not raw_chat_ids:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID 환경변수가 설정되지 않았습니다. "
-            "GitHub Secrets 또는 환경변수를 확인해 주세요."
+        logger.error(
+            "❌ TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID가 비어 있습니다! "
+            "GitHub 저장소 -> Settings -> Secrets and variables -> Actions -> Repository secrets에 "
+            "TELEGRAM_BOT_TOKEN 과 TELEGRAM_CHAT_ID 두 개가 정확히 등록되어 있는지 확인해 주세요."
         )
+        return False
 
     chat_ids: List[str] = [cid.strip() for cid in raw_chat_ids.split(",") if cid.strip()]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -49,8 +58,18 @@ def send_telegram_message(
         try:
             resp = requests.post(url, json=payload, timeout=15)
             if resp.status_code != 200:
-                logger.error(f"텔레그램 발송 실패 (chat_id={cid}, status={resp.status_code}): {resp.text}")
-                all_ok = False
+                logger.warning(f"텔레그램 HTML 발송 응답 코드={resp.status_code} ({resp.text}) -> 일반 텍스트 폴백 재시도...")
+                fallback_payload = {
+                    "chat_id": cid,
+                    "text": _strip_html_tags(message),
+                    "disable_web_page_preview": True,
+                }
+                resp2 = requests.post(url, json=fallback_payload, timeout=15)
+                if resp2.status_code != 200:
+                    logger.error(f"텔레그램 발송 최종 실패 (chat_id={cid}, status={resp2.status_code}): {resp2.text}")
+                    all_ok = False
+                else:
+                    logger.info(f"텔레그램 일반 텍스트 폴백 발송 성공 (chat_id={cid})")
             else:
                 logger.info(f"텔레그램 발송 성공 (chat_id={cid})")
         except Exception as e:

@@ -211,7 +211,7 @@ def format_telegram_message(
     er20_line = ""
     if snap.overheat_stage in (1, 2):
         er20_val_str = f"{snap.t_er20:+.3f}" if snap.t_er20 is not None else "대기"
-        er20_line = f"\n• TQQQ 20일 ER: <b>{er20_val_str}</b> (과열 1·2단 상한해제 기준 > +0.300)"
+        er20_line = f"\n• TQQQ 20일 ER: <b>{er20_val_str}</b> (과열 1·2단 상한해제 기준 &gt; +0.300)"
 
     stop_line = ""
     if snap.principal_stop_price is not None:
@@ -221,10 +221,10 @@ def format_telegram_message(
             f"({_fmt_pct(stop_dist_pct)} / 진입기준가 대비 {cfg.principal_stop_pct*100:.2f}%)"
         )
     elif snap.reentry_lock:
-        stop_line = f"\n• 손절 후 재진입 잠금: 🔴 활성 (QQQ RSI >= {cfg.rsi_reentry_thr:.0f} 필요)"
+        stop_line = f"\n• 손절 후 재진입 잠금: 🔴 활성 (QQQ RSI ≥ {cfg.rsi_reentry_thr:.0f} 필요)"
 
     tqqq_section = (
-        f"📈 <b>[TQQQ & 과열/방어 지표]</b>\n"
+        f"📈 <b>[TQQQ &amp; 과열/방어 지표]</b>\n"
         f"• TQQQ 종가: <b>${snap.t_c:.2f}</b> ({_fmt_pct(snap.t_ret_pct)}) | 200일선: ${snap.t_ma200:.2f}\n"
         f"• 200일 이격도: <b>{snap.dist200:.2f}%</b> ({t_trend_str})\n"
         f"• 45일 기울기: {slope_str}{slope_boost_badge} | 20일 변동성: {snap.t_v20:.4f} ({vol_badge})\n"
@@ -234,13 +234,13 @@ def format_telegram_message(
     )
 
     # 2. QQQ & SPY & VIX 섹션
-    q_bull_str = "정배열(SMA3>161 🟢)" if snap.q_bull else "역배열(SMA3≤161 ⚪)"
+    q_bull_str = "정배열(SMA3&gt;161 🟢)" if snap.q_bull else "역배열(SMA3≤161 ⚪)"
     rsi_str = f"{snap.qqq_rsi14:.2f}" if snap.qqq_rsi14 is not None else "미확인"
     er10_str = f"{snap.qqq_er10:+.3f}" if snap.qqq_er10 is not None else "대기"
     er59_line = ""
     if snap.overheat_stage == 4:
         er59_str = f"{snap.qqq_er59:+.3f}" if snap.qqq_er59 is not None else "대기"
-        er59_line = f"\n• QQQ 59일 ER(O4P): <b>{er59_str}</b> (기준 >= +0.050)"
+        er59_line = f"\n• QQQ 59일 ER(O4P): <b>{er59_str}</b> (기준 ≥ +0.050)"
 
     next_qqq_line = _format_next_qqq_line(snap, cfg)
     spy_status = "🟢 상승추세" if snap.spy_bull else "🔴 하락추세(현금제한)"
@@ -250,7 +250,7 @@ def format_telegram_message(
         f"🧭 <b>[QQQ · SPY · VIX 필터]</b>\n"
         f"• QQQ 종가: <b>${snap.q_c:.2f}</b> ({_fmt_pct(snap.q_ret1_pct)}) | 최근 3봉: {snap.qqq3_emoji}\n"
         f"• QQQ 추세: {q_bull_str} | RSI(14): {rsi_str}\n"
-        f"• QQQ 10일 ER(T3): <b>{er10_str}</b> (약세 기준 <= -0.300)"
+        f"• QQQ 10일 ER(T3): <b>{er10_str}</b> (약세 기준 ≤ -0.300)"
         f"{er59_line}"
         f"{next_qqq_line}\n"
         f"• SPY 200일 이격도: <b>{snap.spy_dist200:.2f}%</b> ({spy_status})\n"
@@ -262,7 +262,7 @@ def format_telegram_message(
     macro_branch_str = K.t3_risk_branch_status_text(snap.t3_short_risk, snap.t3_long_risk)
     dxy_line = (
         f"  - DXY(120일, {snap.dxy_source_label}): {snap.dxy_c:.2f} "
-        f"({_fmt_pct(snap.dxy_roc)} / 기준 > 0.00%) {'🔴위험' if snap.dxy_risk else '🟢정상'}"
+        f"({_fmt_pct(snap.dxy_roc)} / 기준 &gt; 0.00%) {'🔴위험' if snap.dxy_risk else '🟢정상'}"
         if (snap.dxy_c is not None and snap.dxy_roc is not None)
         else "  - DXY(120일): 미확인"
     )
