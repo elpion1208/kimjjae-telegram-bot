@@ -125,11 +125,11 @@ def run_bot(
     now_minutes = now_et.hour * 60 + now_et.minute
     close_minutes = close_hour_et * 60
     minutes_since_close = now_minutes - close_minutes
-    is_after_primary_window = (today_et_str == latest_trade_date) and (minutes_since_close >= 18)
-
+    # ※ GitHub 스케줄은 수십 분~수 시간 지연될 수 있으므로, 시간 기준이 아니라
+    #    state.json의 당일 1차 발송 기록만으로 1차/2차를 판별합니다. (지연되어도 1차는 반드시 1번 발송)
     effective_mode = mode.lower()
     if effective_mode == "auto":
-        effective_mode = "final" if (primary_sent_today or is_after_primary_window) else "primary"
+        effective_mode = "final" if primary_sent_today else "primary"
 
     logger.info(
         f"판정 시작: 미국 거래일={latest_trade_date}, 현재 ET={now_et.strftime('%H:%M')} (마감+{minutes_since_close}분), "
