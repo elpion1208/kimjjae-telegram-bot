@@ -66,15 +66,12 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Set up Gradle 8.5
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: "8.5"
-
-      - name: Build Android Widget APK
-        working-directory: android_app
+      - name: Install Gradle 8.5 and Build Android Widget APK
         run: |
-          gradle assembleDebug --no-daemon
+          curl -sSL https://services.gradle.org/distributions/gradle-8.5-bin.zip -o /tmp/gradle.zip
+          sudo unzip -q -o /tmp/gradle.zip -d /opt
+          cd android_app
+          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon
           cp app/build/outputs/apk/debug/app-debug.apk ../tqqq-widget.apk
 
       - name: Upload APK Artifact
