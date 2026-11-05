@@ -1,5 +1,5 @@
 """
-김째매매법 텔레그램 봇 메인 실행 스크립트 (main.py)
+변형티큐법 텔레그램 봇 메인 실행 스크립트 (main.py)
 - 1차(PRIMARY) 판정: 미국 정규장 마감 직후 실행 -> 당일 1차 알림 발송 및 pre_day_state(c084DayStart) 저장
 - 2차(FINAL) 정정 판정: 마감 15분~90분 후 실행 -> 최신 확정 VIX/금리/DXY로 재판정 후 목표비중 변경 시에만 2차 알림 발송
 """
@@ -117,14 +117,23 @@ def run_bot(
     else:
         pre_day_state = replayed_pre_day_state
 
-    # 실행 모드 결정 (auto일 경우 당일 1차 발송 여부에 따라 PRIMARY / FINAL 자동 전환)
+    # 실행 모드 결정:
+    # - auto일 경우:
+    #   1) state.json에 당일 1차 발송 이력(primary_sent_today)이 있거나,
+    #   2) 미국 정규장 마감 후 18분 이상 경과(예: 16:18 ET 이후 도는 2차 스케줄 또는 서머타임 중 21:xx UTC 스케줄)했으면
+    #      무조건 'final'(2차 변경 감시) 모드로 동작하여 1차 리포트가 중복 발송되는 것을 원천 차단합니다.
+    now_minutes = now_et.hour * 60 + now_et.minute
+    close_minutes = close_hour_et * 60
+    minutes_since_close = now_minutes - close_minutes
+    is_after_primary_window = (today_et_str == latest_trade_date) and (minutes_since_close >= 18)
+
     effective_mode = mode.lower()
     if effective_mode == "auto":
-        effective_mode = "final" if primary_sent_today else "primary"
+        effective_mode = "final" if (primary_sent_today or is_after_primary_window) else "primary"
 
     logger.info(
-        f"판정 시작: 미국 거래일={latest_trade_date}, 요청 모드={mode} -> 실행 모드={effective_mode.upper()}, "
-        f"당일 1차 발송 여부={primary_sent_today}"
+        f"판정 시작: 미국 거래일={latest_trade_date}, 현재 ET={now_et.strftime('%H:%M')} (마감+{minutes_since_close}분), "
+        f"요청 모드={mode} -> 실행 모드={effective_mode.upper()}, 당일 1차 발송 기록={primary_sent_today}"
     )
 
     # ------------------------------------------------------------
@@ -176,50 +185,34 @@ def run_bot(
     # 3. 2차 (FINAL) 확정 신호 변경 감시 모드
     # ------------------------------------------------------------
     if effective_mode == "final":
-        # 만약 당일 1차 알림 자체가 누락되었다면(sameDayPrimaryRecoveryCatchupDue), 먼저 1차 알림 발송
-        if not primary_sent_today and not force_send:
-            logger.info(
-                f"{latest_trade_date} 거래일의 1차 알림 이력이 없어 1차(PRIMARY) 동기화 알림을 먼저 발송합니다."
-            )
-            post_state, primary_snap = engine.step_one_day(
-                pre_day_state, latest_trade_date, phase="PRIMARY", is_latest_day=True
-            )
-            msg = format_telegram_message(primary_snap, cfg)
-            ok = send_telegram_message(msg, dry_run=dry_run)
-            if not ok:
-                return 1
-            new_persisted = {
-                "trade_date": latest_trade_date,
-                "primary_sent": True,
-                "final_sent_count": 0,
-                "last_notified_target_code": primary_snap.target_asset_code,
-                "last_notified_target_role": primary_snap.target_o4_role,
-                "last_notified_bill": primary_snap.target_bill,
-                "pre_day_state": pre_day_state.to_dict(),
-                "post_day_state": post_state.to_dict(),
-                "primary_snapshot": primary_snap.to_dict(),
-            }
-            save_persisted_state(new_persisted, state_path)
-            return 0
+        # 2차 모드에서는 절대 1차 전체 리포트를 재발송하지 않으며,
+        # 당일 1차 판정(또는 이전 통지 비중) 대비 목표비중이 실제로 바뀐 경우에만 간결한 포지션 변경 알림을 보냅니다.
+        _, calc_primary_snap = engine.step_one_day(
+            pre_day_state, latest_trade_date, phase="PRIMARY", is_latest_day=False
+        )
 
         # 당일 시작 상태(pre_day_state = c084DayStart)에서 최신 확정 VIX·금리·DXY로 재판정
         final_post_state, final_snap = engine.step_one_day(
             pre_day_state, latest_trade_date, phase="FINAL", is_latest_day=True
         )
 
-        last_code = persisted.get("last_notified_target_code", final_snap.target_asset_code)
-        last_bill = float(persisted.get("last_notified_bill", final_snap.target_bill))
+        primary_snap_obj: Optional[DecisionSnapshot] = calc_primary_snap
+        if saved_trade_date == latest_trade_date and "primary_snapshot" in persisted and isinstance(persisted["primary_snapshot"], dict):
+            try:
+                primary_snap_obj = DecisionSnapshot(**persisted["primary_snapshot"])
+            except Exception:
+                primary_snap_obj = calc_primary_snap
+
+        if saved_trade_date == latest_trade_date and "last_notified_target_code" in persisted:
+            last_code = int(persisted["last_notified_target_code"])
+            last_bill = float(persisted.get("last_notified_bill", primary_snap_obj.target_bill))
+        else:
+            last_code = primary_snap_obj.target_asset_code
+            last_bill = primary_snap_obj.target_bill
 
         weight_changed = abs(K.code_weight(final_snap.target_asset_code) - K.code_weight(last_code)) > 1e-9
         d7_changed = cfg.d7_enabled and (abs(final_snap.target_bill - last_bill) >= 0.005 - 1e-9)
         target_changed = weight_changed or d7_changed
-
-        primary_snap_obj: Optional[DecisionSnapshot] = None
-        if "primary_snapshot" in persisted and isinstance(persisted["primary_snapshot"], dict):
-            try:
-                primary_snap_obj = DecisionSnapshot(**persisted["primary_snapshot"])
-            except Exception:
-                primary_snap_obj = None
 
         if target_changed or force_send:
             logger.info(
@@ -238,7 +231,9 @@ def run_bot(
             persisted["last_notified_target_code"] = final_snap.target_asset_code
             persisted["last_notified_target_role"] = final_snap.target_o4_role
             persisted["last_notified_bill"] = final_snap.target_bill
+            persisted["pre_day_state"] = pre_day_state.to_dict()
             persisted["post_day_state"] = final_post_state.to_dict()
+            persisted["primary_snapshot"] = primary_snap_obj.to_dict()
             persisted["final_snapshot"] = final_snap.to_dict()
             save_persisted_state(persisted, state_path)
             return 0
@@ -250,7 +245,13 @@ def run_bot(
                 f"원본 규칙에 따라 중복 알림을 발송하지 않습니다."
             )
             # 상태 파일의 최신 확정 스냅샷만 조용히 갱신
+            persisted["trade_date"] = latest_trade_date
+            persisted["primary_sent"] = True
+            persisted["last_notified_target_code"] = last_code
+            persisted["last_notified_bill"] = last_bill
+            persisted["pre_day_state"] = pre_day_state.to_dict()
             persisted["post_day_state"] = final_post_state.to_dict()
+            persisted["primary_snapshot"] = primary_snap_obj.to_dict()
             persisted["final_snapshot"] = final_snap.to_dict()
             save_persisted_state(persisted, state_path)
             return 0
@@ -260,7 +261,7 @@ def run_bot(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="김째매매법 텔레그램 알림 봇")
+    parser = argparse.ArgumentParser(description="변형티큐법 텔레그램 알림 봇")
     parser.add_argument(
         "--mode",
         choices=["auto", "primary", "final", "test"],

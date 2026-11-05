@@ -157,16 +157,43 @@ def format_telegram_message(
 
     if snap.phase == "FINAL":
         header = (
-            f"🚨 <b>[변형티큐법] 2차(FINAL) 확정 신호 변경</b>\n"
+            f"🚨 <b>[변형티큐법] 2차(FINAL) 포지션 변경 알림</b>\n"
             f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
         )
-    else:
-        header = (
-            f"📊 <b>[변형티큐법] 1차(PRIMARY) 마감 판정</b>\n"
-            f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
-        )
+        if primary_snap is not None:
+            p_icon = K.alert_pos_icon(primary_snap.target_asset_code, primary_snap.target_o4_role)
+            f_icon = K.alert_pos_icon(snap.target_asset_code, snap.target_o4_role)
+            p_str = K.d7_breakdown(
+                primary_snap.target_tq, primary_snap.target_bill, primary_snap.target_cash, p_icon, True
+            )
+            f_str = K.d7_breakdown(
+                snap.target_tq, snap.target_bill, snap.target_cash, f_icon, True
+            )
+            change_section = (
+                f"🔄 <b>포지션 변경 내역</b>\n"
+                f"• 1차 판정(마감 직후): {p_str}\n"
+                f"• <b>2차 확정(최종 비중): <u>{f_str}</u></b>"
+            )
+        else:
+            change_section = _format_position_section(
+                snap.prev_asset_code,
+                snap.prev_o4_role,
+                snap.target_asset_code,
+                snap.target_o4_role,
+                snap,
+                cfg,
+            )
 
-    # 포지션 섹션 (1차는 전일 대비, 2차 변경 알림도 당일 시작 기준 전일 대비 + 1차 대비 병기)
+        tag_suffix = f" [{snap.tag_text}]" if snap.tag_text else ""
+        reason_section = f"📌 <b>변경 사유</b>: <b>{snap.reason_text}</b>{tag_suffix}"
+        return "\n\n".join([header, change_section, reason_section])
+
+    header = (
+        f"📊 <b>[변형티큐법] 1차(PRIMARY) 마감 판정</b>\n"
+        f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
+    )
+
+    # 포지션 섹션 (1차는 전일 대비)
     pos_section = _format_position_section(
         snap.prev_asset_code,
         snap.prev_o4_role,
@@ -175,18 +202,7 @@ def format_telegram_message(
         snap,
         cfg,
     )
-
     final_diff_note = ""
-    if snap.phase == "FINAL" and primary_snap is not None:
-        p_icon = K.alert_pos_icon(primary_snap.target_asset_code, primary_snap.target_o4_role)
-        f_icon = K.alert_pos_icon(snap.target_asset_code, snap.target_o4_role)
-        p_str = K.d7_breakdown(
-            primary_snap.target_tq, primary_snap.target_bill, primary_snap.target_cash, p_icon, True
-        )
-        f_str = K.d7_breakdown(
-            snap.target_tq, snap.target_bill, snap.target_cash, f_icon, True
-        )
-        final_diff_note = f"\n🔄 <b>1차 판정 대비 변경</b>: {p_str} ➡️ <b>{f_str}</b>"
 
     # D7 안내 노트
     d7_note_lines = ["<i>※ 목표비중 기준 · 실제 체결 확인 아님</i>"]
