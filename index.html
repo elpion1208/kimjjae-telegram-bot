@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#ECECEF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="변형티큐법" />
+  <title>변형티큐법 모바일 대시보드</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: linear-gradient(135deg, #EFEFF3, #E6E6EB);
+      color: #121216;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* Reference Outer Squircle Shell */
+    .soft-shell {
+      background: linear-gradient(145deg, #F8F8FA, #F2F2F6);
+      box-shadow: 0 22px 48px rgba(0, 0, 0, 0.06), -6px -6px 16px #FFFFFF, 6px 6px 18px #DCDCE2;
+      border: 2.5px solid #FFFFFF;
+      border-radius: 38px;
+    }
+    /* Reference Top Stone-Gray Hero Banner */
+    .soft-hero {
+      background: linear-gradient(135deg, #E8EAEE, #EDEEF2);
+      box-shadow: inset 1px 1px 3px rgba(200, 204, 212, 0.45);
+      border-radius: 26px;
+    }
+    /* Reference Frosted Pill Button with Crisp White Rim */
+    .soft-frosted-btn {
+      background: linear-gradient(135deg, rgba(249, 250, 252, 0.92), rgba(235, 237, 242, 0.92));
+      border: 2px solid #FFFFFF;
+      box-shadow: 3px 4px 10px rgba(160, 164, 174, 0.25), -2px -2px 6px #FFFFFF;
+      border-radius: 9999px;
+      transition: all 0.15s ease;
+    }
+    .soft-frosted-btn:active {
+      transform: scale(0.96);
+      box-shadow: inset 2px 2px 5px rgba(160, 164, 174, 0.35);
+    }
+    /* Reference Plump Stadium Pill Capsule */
+    .soft-pill {
+      background: linear-gradient(145deg, #FCFCFE, #F3F3F7);
+      box-shadow: 5px 6px 14px #DDDDE3, -5px -5px 12px #FFFFFF;
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      border-radius: 9999px;
+      transition: all 0.15s ease;
+    }
+    .soft-pill:active {
+      box-shadow: inset 3px 3px 7px #DCDCE2, inset -3px -3px 7px #FFFFFF;
+      transform: translateY(1px);
+    }
+    /* Soft-UI Detail Card */
+    .soft-card {
+      background: linear-gradient(145deg, #FCFCFE, #F3F3F7);
+      box-shadow: 5px 6px 14px #DDDDE3, -5px -5px 12px #FFFFFF;
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      border-radius: 26px;
+    }
+  </style>
+</head>
+<body class="min-h-screen py-5 px-3.5 select-none">
+
+  <main class="max-w-md mx-auto soft-shell p-5 space-y-5">
+
+    <!-- 1. 상단 스톤그레이 히어로 배너 (레퍼런스의 Crush Contrast 영역) -->
+    <section id="hero-card" class="soft-hero p-5">
+      <div class="flex items-center justify-between mb-1">
+        <span id="sub-date" class="text-xs font-bold text-zinc-500">미국 거래일 불러오는 중...</span>
+        <span id="change-badge" class="text-xs font-extrabold text-zinc-700 bg-white/70 px-2.5 py-0.5 rounded-full border border-white">
+          확인 중
+        </span>
+      </div>
+
+      <div class="flex items-end justify-between gap-2 mt-1">
+        <div>
+          <div id="pos-title" class="text-3xl font-black tracking-tight text-zinc-900">
+            로딩 중...
+          </div>
+          <div id="hero-price-line" class="text-sm font-medium text-zinc-700 mt-1">
+            -
+          </div>
+          <div id="prev-pos-line" class="text-xs font-semibold text-zinc-500 mt-0.5"></div>
+        </div>
+
+        <button id="btn-refresh" onclick="loadState()" class="soft-frosted-btn px-4 py-2 text-xs font-extrabold text-zinc-900 shrink-0">
+          ↻ 새로고침
+        </button>
+      </div>
+
+      <div class="mt-3 pt-2.5 border-t border-zinc-300/60 text-xs font-semibold text-zinc-600">
+        ▶ 판정 사유 : <span id="reason-text" class="text-zinc-800 font-bold">-</span>
+      </div>
+    </section>
+
+    <!-- 2. 중단 스타디움 알약(Pill) 캡슐 + 하단 라벨 (YTD 수익률 / 최근 3개월 수익률 / 이번달 수익률) -->
+    <section class="grid grid-cols-3 gap-3.5 text-center">
+      <div>
+        <div class="soft-pill py-3.5 px-2">
+          <div id="p-ytd" class="text-base font-black text-zinc-900">-</div>
+          <div id="p-ytd-sub" class="text-xs font-semibold text-zinc-500 mt-0.5 hidden">TQQQ -</div>
+        </div>
+        <div class="text-xs font-extrabold text-zinc-900 mt-2">YTD 수익률</div>
+      </div>
+
+      <div>
+        <div class="soft-pill py-3.5 px-2">
+          <div id="p-3m" class="text-base font-black text-zinc-900">-</div>
+          <div id="p-3m-sub" class="text-xs font-semibold text-zinc-500 mt-0.5 hidden">TQQQ -</div>
+        </div>
+        <div class="text-xs font-extrabold text-zinc-900 mt-2">최근 3개월 수익률</div>
+      </div>
+
+      <div>
+        <div class="soft-pill py-3.5 px-2">
+          <div id="p-mtd" class="text-base font-black text-zinc-900">-</div>
+          <div id="p-mtd-sub" class="text-xs font-semibold text-zinc-500 mt-0.5 hidden">TQQQ -</div>
+        </div>
+        <div class="text-xs font-extrabold text-zinc-900 mt-2">이번달 수익률</div>
+      </div>
+    </section>
+
+    <!-- 얇은 헤어라인 구분선 -->
+    <div class="border-t border-zinc-200/80"></div>
+
+    <!-- 3. 하단 포인트 바: 좌측(TQQQ 종가/이격) | 중앙 알약 캡슐 + 레드 배지(손절선) | 우측(T3 거시필터) -->
+    <section class="grid grid-cols-3 items-center text-center">
+      <div>
+        <div id="q-dist" class="text-sm font-black text-zinc-900">-</div>
+        <div id="q-oh" class="text-xs font-medium text-zinc-500 mt-0.5">200일 이격도</div>
+      </div>
+
+      <div class="soft-pill py-2.5 px-3 relative flex flex-col items-center justify-center">
+        <span id="q-stop-sub" class="absolute -top-1.5 right-2 px-2 py-0.5 rounded-full bg-[#E41E2A] text-white text-xs font-extrabold shadow-sm">
+          -
+        </span>
+        <div id="q-stop" class="text-sm font-black text-zinc-900 pr-3">-</div>
+        <div id="q-stop-label" class="text-xs font-medium text-zinc-500">원금보호 손절선</div>
+      </div>
+
+      <div>
+        <div id="q-t3-short" class="text-sm font-black text-zinc-900">-</div>
+        <div class="text-xs font-medium text-zinc-500 mt-0.5">금리·달러(T3)</div>
+      </div>
+    </section>
+
+    <div class="border-t border-zinc-200/80"></div>
+
+    <!-- 4. [1] TQQQ & 과열/방어 지표 -->
+    <section class="soft-card p-4 space-y-2">
+      <h2 class="text-xs font-extrabold text-zinc-900 uppercase tracking-wider">
+        [1] TQQQ &amp; 과열/방어 지표
+      </h2>
+      <div class="divide-y divide-zinc-200/60 text-xs">
+        <div class="flex justify-between py-2"><span class="text-zinc-500">TQQQ 종가 (일간 변동)</span><span id="q-tqqq" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">TQQQ 200일선 / 45일 기울기</span><span id="d-tma200" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">20일 실현변동성 (락 ≥ 0.059)</span><span id="d-vol" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">과열 단계 (140/144/147/158%)</span><span id="d-oh-detail" class="font-bold text-zinc-900">-</span></div>
+      </div>
+    </section>
+
+    <!-- 5. [2] QQQ · SPY · VIX 필터 -->
+    <section class="soft-card p-4 space-y-2">
+      <h2 class="text-xs font-extrabold text-zinc-900 uppercase tracking-wider">
+        [2] QQQ · SPY · VIX 필터
+      </h2>
+      <div class="divide-y divide-zinc-200/60 text-xs">
+        <div class="flex justify-between py-2"><span class="text-zinc-500">QQQ 종가 (최근 3봉)</span><span id="d-qqq" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">QQQ 추세 (SMA 3 vs 161)</span><span id="d-qbull" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">QQQ RSI(14) / 10일 ER</span><span id="d-qrsi" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">익일 QQQ T3 기준가</span><span id="d-nextq" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">SPY 200일 이격도 / VIX</span><span id="d-spy" class="font-bold text-zinc-900">-</span></div>
+      </div>
+    </section>
+
+    <!-- 6. [3] T3 금리·달러 거시위험 & 환율 -->
+    <section class="soft-card p-4 space-y-2">
+      <h2 class="text-xs font-extrabold text-zinc-900 uppercase tracking-wider">
+        [3] T3 금리·달러 거시위험 &amp; 환율
+      </h2>
+      <div class="divide-y divide-zinc-200/60 text-xs">
+        <div class="flex justify-between py-2"><span class="text-zinc-500">T3 거시위험 종합</span><span id="d-t3-summary" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">달러지수 (DXY 120일)</span><span id="d-dxy" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">미국채 2년 / 6개월</span><span id="d-dgs-short" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">미국채 10년 / 20년</span><span id="d-dgs-long" class="font-bold text-zinc-900">-</span></div>
+        <div class="flex justify-between py-2"><span class="text-zinc-500">원/달러 환율</span><span id="d-krw" class="font-bold text-zinc-900">-</span></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const STATE_URLS = [
+      "./state.json",
+      "https://raw.githubusercontent.com/elpion1208/kimjjae-telegram-bot/main/state.json"
+    ];
+
+    function fmtPct(v) {
+      if (v === null || v === undefined || isNaN(v)) return "-";
+      return (v > 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+    }
+
+    function fmtBreakdown(tq, bill, cash) {
+      const parts = [];
+      const tqPct = Math.round((tq || 0) * 1000) / 10;
+      const billPct = Math.round((bill || 0) * 1000) / 10;
+      const cashPct = Math.round((cash || 0) * 1000) / 10;
+      if (tqPct > 0) parts.push(`TQQQ ${tqPct}%`);
+      if (billPct > 0) parts.push(`단기채 ${billPct}%`);
+      if (cashPct > 0 || parts.length === 0) parts.push(`현금 ${cashPct}%`);
+      return parts.join(" | ");
+    }
+
+    async function fetchStateData() {
+      const q = "?t=" + Date.now();
+      for (const u of STATE_URLS) {
+        try {
+          const res = await fetch(u + q, { cache: "no-store" });
+          if (res.ok) return await res.json();
+        } catch (_) {}
+      }
+      throw new Error("state.json을 불러올 수 없습니다.");
+    }
+
+    async function loadState() {
+      const btn = document.getElementById("btn-refresh");
+      btn.textContent = "⏳ 갱신중";
+      try {
+        const data = await fetchStateData();
+        const s = data.final_snapshot || data.primary_snapshot || data;
+        if (!s || (!s.trade_date && !s.us_trade_date)) {
+          document.getElementById("pos-title").textContent = "판정 데이터 대기중";
+          btn.textContent = "↻ 새로고침";
+          return;
+        }
+        const tradeDate = s.trade_date || s.us_trade_date || "-";
+        const phaseLabel = s.phase === "FINAL" ? "2차 확정" : (s.stage || "1차 마감");
+        document.getElementById("sub-date").textContent = `변형티큐법 · ${tradeDate} (${phaseLabel})`;
+
+        const isHold = (s.target_tq !== undefined ? s.target_tq : (s.pos_code || 0)) > 0.001;
+        const posStr = s.target_tq !== undefined ? fmtBreakdown(s.target_tq, s.target_bill, s.target_cash) : (s.pos_name || "TQQQ 100%");
+        const prevStr = s.before_tq !== undefined ? fmtBreakdown(s.before_tq, s.before_bill, s.before_cash) : (s.prev_pos_name || "");
+        const samePos = s.target_tq !== undefined ? Math.abs((s.target_tq || 0) - (s.before_tq || 0)) < 1e-6 : !s.pos_changed;
+
+        document.getElementById("pos-title").textContent = posStr;
+        const tc = Number(s.t_c ?? s.tqqq_close ?? 0);
+        const tRet = Number(s.t_ret_pct ?? s.tqqq_daily_ret_pct ?? 0);
+        const dist200 = Number(s.dist200 ?? s.tqqq_dist200 ?? 0);
+        document.getElementById("hero-price-line").textContent = `$${tc.toFixed(2)} (${fmtPct(tRet)}) · 이격도 ${dist200.toFixed(1)}%`;
+
+        const changeBadge = document.getElementById("change-badge");
+        changeBadge.textContent = samePos ? "포지션 유지" : "포지션 변경";
+        changeBadge.className = samePos
+          ? "text-xs font-extrabold text-zinc-700 bg-white/80 px-2.5 py-0.5 rounded-full border border-white"
+          : "text-xs font-extrabold text-white bg-[#E41E2A] px-2.5 py-0.5 rounded-full shadow-sm";
+
+        document.getElementById("prev-pos-line").textContent = samePos ? "" : `이전 포지션: ${prevStr}`;
+        document.getElementById("reason-text").textContent = (s.reason_text || s.reason_summary || "-") + (s.tag_text ? ` [${s.tag_text}]` : "");
+
+        const setPerf = (idVal, idSub, v, tv) => {
+          const el = document.getElementById(idVal);
+          if (v !== null && v !== undefined && !isNaN(v)) {
+            el.textContent = (v >= 0 ? "+" : "") + Number(v).toFixed(1) + "%";
+          } else {
+            el.textContent = "집계중";
+          }
+          const subEl = document.getElementById(idSub);
+          if (tv !== null && tv !== undefined && !isNaN(tv)) {
+            subEl.textContent = "TQQQ " + (tv >= 0 ? "+" : "") + Number(tv).toFixed(1) + "%";
+          } else {
+            subEl.textContent = "TQQQ 비교";
+          }
+        };
+        setPerf("p-ytd", "p-ytd-sub", s.ytd_ret_pct, s.tqqq_ytd_pct);
+        setPerf("p-3m", "p-3m-sub", s.ret_3m_pct, s.tqqq_3m_pct);
+        setPerf("p-mtd", "p-mtd-sub", s.mtd_ret_pct, s.tqqq_mtd_pct);
+
+        document.getElementById("q-dist").textContent = `${dist200.toFixed(1)}%`;
+        document.getElementById("q-oh").textContent = s.overheat_stage > 0 ? `과열 ${s.overheat_stage}단` : (dist200 >= 100 ? "200일 상향" : "200일 하향");
+
+        const stopBadge = document.getElementById("q-stop-sub");
+        if (s.principal_stop_price) {
+          const stopDist = ((s.principal_stop_price / tc) - 1.0) * 100.0;
+          document.getElementById("q-stop").textContent = `$${Number(s.principal_stop_price).toFixed(2)}`;
+          document.getElementById("q-stop-label").textContent = "원금보호 손절선";
+          stopBadge.textContent = `${stopDist >= 0 ? "+" : ""}${stopDist.toFixed(1)}%`;
+          stopBadge.className = "absolute -top-1.5 right-2 px-2 py-0.5 rounded-full bg-[#E41E2A] text-white text-xs font-extrabold shadow-sm";
+        } else {
+          document.getElementById("q-stop").textContent = "102.3%";
+          document.getElementById("q-stop-label").textContent = "200일 돌파목표";
+          stopBadge.textContent = s.reentry_lock ? "RSI잠금" : "재진입";
+          stopBadge.className = "absolute -top-1.5 right-2 px-2 py-0.5 rounded-full bg-zinc-900 text-white text-xs font-extrabold shadow-sm";
+        }
+
+        const t3Blocked = s.t3_short_risk || s.t3_long_risk || s.t3_Blocked;
+        document.getElementById("q-t3-short").textContent = t3Blocked ? "위험" : "정상";
+
+        document.getElementById("q-tqqq").textContent = `$${tc.toFixed(2)} (${fmtPct(tRet)})`;
+        const tma = Number(s.t_ma200 ?? s.tqqq_sma200 ?? 0);
+        const slopeVal = s.dist_slope ?? s.slope_tqqq200;
+        const slopeTxt = slopeVal !== null && slopeVal !== undefined ? ` | ${Number(slopeVal).toFixed(4)}${(s.slope_ok_flag || s.slope_boost_ok) ? " (부스트 ON)" : ""}` : "";
+        document.getElementById("d-tma200").textContent = `$${tma.toFixed(2)}${slopeTxt}`;
+        document.getElementById("d-vol").textContent = `${Number(s.t_v20 ?? s.vol20 ?? 0).toFixed(4)} (${(s.locked || s.vol_lock) ? "변동성 락" : "정상"})`;
+        document.getElementById("d-oh-detail").textContent = `${s.overheat_stage || 0}단`;
+        document.getElementById("d-qqq").textContent = `$${Number(s.q_c ?? s.qqq_close ?? 0).toFixed(2)} (${fmtPct(s.q_ret1_pct ?? s.qqq_daily_ret_pct)}) ${s.qqq3_emoji || ""}`;
+        document.getElementById("d-qbull").textContent = (s.q_bull ?? s.qqq_bull) ? "정배열 (SMA3 > 161)" : "역배열 (SMA3 ≤ 161)";
+        document.getElementById("d-qrsi").textContent = `RSI ${(s.qqq_rsi14 ?? s.qqq_rsi) ? Number(s.qqq_rsi14 ?? s.qqq_rsi).toFixed(1) : "-"} | ER10 ${s.qqq_er10 !== null && s.qqq_er10 !== undefined ? Number(s.qqq_er10).toFixed(3) : "-"}`;
+        document.getElementById("d-nextq").textContent = isHold && s.next_qqq_sell_price ? `약세기준 $${Number(s.next_qqq_sell_price).toFixed(2)} 이하` : (!isHold && s.next_qqq_buy_price ? `해제기준 $${Number(s.next_qqq_buy_price).toFixed(2)} 이상` : "산출 대기");
+        document.getElementById("d-spy").textContent = `${Number(s.spy_dist200 || 0).toFixed(2)}% (${s.spy_bull ? "상승" : "하락"}) | VIX ${(s.vix_c ?? s.vix_close) ? Number(s.vix_c ?? s.vix_close).toFixed(2) : "-"}`;
+
+        const t3RiskStr = (s.t3_short_risk && s.t3_long_risk) ? "단기+장기위험" : (s.t3_short_risk ? "단기금리위험" : (s.t3_long_risk ? "장기·달러위험" : "정상"));
+        document.getElementById("d-t3-summary").textContent = t3RiskStr;
+        document.getElementById("d-dxy").textContent = (s.dxy_c ?? s.dxy_close) ? `${Number(s.dxy_c ?? s.dxy_close).toFixed(2)} (${fmtPct(s.dxy_roc)})` : "-";
+        document.getElementById("d-dgs-short").textContent = `2Y: ${s.dgs2_c ? Number(s.dgs2_c).toFixed(2) + "%" : "-"} | 6M: ${s.dgs6m_c ? Number(s.dgs6m_c).toFixed(2) + "%" : "-"}`;
+        document.getElementById("d-dgs-long").textContent = `10Y: ${s.us10y_c ? Number(s.us10y_c).toFixed(2) + "%" : "-"} | 20Y: ${s.dgs20_c ? Number(s.dgs20_c).toFixed(2) + "%" : "-"}`;
+        document.getElementById("d-krw").textContent = (s.usdkrw_c ?? s.usdkrw_close) ? `${Number(s.usdkrw_c ?? s.usdkrw_close).toLocaleString("ko-KR", {maximumFractionDigits: 1})}원` : "-";
+      } catch (e) {
+        document.getElementById("sub-date").textContent = "로드 오류: " + e.message;
+      }
+      btn.textContent = "↻ 새로고침";
+    }
+    loadState();
+  </script>
+</body>
+</html>
