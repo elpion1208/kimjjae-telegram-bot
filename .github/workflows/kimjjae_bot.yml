@@ -111,12 +111,15 @@ jobs:
           git config --local user.name "github-actions[bot]"
           STATE_FILE=$(find . -maxdepth 2 -name "state.json" | head -n 1)
           if [ -n "$STATE_FILE" ]; then
-            git add "$STATE_FILE"
+            cp "$STATE_FILE" /tmp/state_backup.json
+            git fetch origin "${{ github.ref_name }}" || true
+            git reset --hard "origin/${{ github.ref_name }}" || true
+            cp /tmp/state_backup.json "$STATE_FILE"
+            git add -f "$STATE_FILE"
           fi
           if git diff --staged --quiet; then
             echo "state.json 변경사항 없음"
           else
             git commit -m "chore: update strategy state.json [skip ci]"
-            git pull --rebase origin "${{ github.ref_name }}" || true
-            git push
+            git push origin "HEAD:${{ github.ref_name }}" || true
           fi
