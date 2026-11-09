@@ -43,8 +43,7 @@ on:
       mode:
         description: '실행 모드 (test: 즉시 테스트 발송 / auto: 자동 1·2차 판정 / primary: 1차 강제 / final: 2차 강제)'
         required: true
-        default: 'test'
-        type: choice
+        default: 'tauto'       type: choice
         options:
           - test
           - auto
