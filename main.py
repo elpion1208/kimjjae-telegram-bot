@@ -103,7 +103,13 @@ def run_bot(
 
     latest_trade_date = engine.valid_dates[-1]
     persisted = load_persisted_state(state_path)
-    saved_trade_date = persisted.get("trade_date")
+    saved_trade_date = persisted.get("trade_date"
+    if saved_trade_date and latest_trade_date < saved_trade_date and mode.lower() != "test" and not force_send:
+        logger.warning(
+            f"수집된 최신 거래일({latest_trade_date})이 저장된 거래일({saved_trade_date})보다 과거입니다. "
+            "외부 데이터 일시 누락으로 판단하여 실행을 건너뜁니다."
+        )
+        return 0)
     primary_sent_today = (saved_trade_date == latest_trade_date) and bool(
         persisted.get("primary_sent", False)
     )
