@@ -1,6 +1,6 @@
 """
-김째매매법 (KimJjae Trading Strategy) 설정 및 상수 정의
-원본 Pine Script v6 (C097)의 모든 기본 입력값과 고정 상수를 반영합니다.
+변형티큐(V2) 전략 (KimJjae V2 Trading Strategy) 설정 및 상수 정의
+변형티큐(V2) 완전 명세서 기준의 모든 기본 입력값과 고정 상수를 반영합니다.
 """
 
 from dataclasses import dataclass
@@ -23,20 +23,21 @@ class StrategyConfig:
     fred_dgs10: str = "DGS10"
     fred_dgs20: str = "DGS20"
 
-    # 2. 가격 보정 설정
-    # 기본 가격은 배당조정(auto_adjust=True), QQQ RSI는 분할조정(auto_adjust=False) 사용
+    # 2. 가격 보정 및 시차(Lag) 설정
+    # V2 명세서: TQQQ/QQQ/SPY는 배당 재투자 보정 수정주가(auto_adjust=True) 사용
     use_adjusted_price: bool = True
     adjusted_mode: str = "dividends"  # "dividends" or "splits"
-    use_tv_default_rsi: bool = True
+    use_tv_default_rsi: bool = False  # V2 명세서: QQQ 수정종가(qc) 기준 Wilder RSI(14) 산출
+    macro_lag_days: int = 1           # V2 명세서: 국채금리·VIX·DXY 전일 확정치(shift(1), 최대 7일 ffill) 사용
 
-    # 3. 기본 진입비중: TQQQ 200일 이격도 + QQQ SMA3/SMA161
-    dist200_enter_band: float = 102.27  # 200일 이격도 상향 확인(진입, %)
-    dist200_exit_band: float = 100.28   # 200일 이격도 하향 확인(청산, %)
+    # 3. [G1] 기본 진입비중: TQQQ 200일 이격도 + QQQ SMA3/SMA161 (V2 정수화: 102.0% / 100.0%)
+    dist200_enter_band: float = 102.0   # 200일 이격도 상향 확인(진입, %)
+    dist200_exit_band: float = 100.0    # 200일 이격도 하향 확인(청산, %)
     early_full_dist: float = 101.00     # 조기 100% 복귀 기준(TQQQ 200일 이격도, %)
     q_bull_weight_floor_dist: float = 97.00  # QQQ 보조비중 확대 기준(TQQQ 200일 이격도, %)
     q_bull_weight_hi: float = 0.20      # QQQ 보조비중 확대값(0.20=20%, 그 미만은 10%)
 
-    # 4. 기울기 보조 (Slope Boost)
+    # 4. [G2] 45일 이격도 선형회귀 기울기 부스트 & 20일 변동성 락
     use_slope_boost: bool = True
     slope_len: int = 45                 # 이격도 선형회귀 계산 기간
     slope_thr: float = 0.1100           # 이격도 기울기 임계값
@@ -46,7 +47,7 @@ class StrategyConfig:
     # 5. 변동성 락
     vol_threshold: float = 0.059        # 20일 변동성 락 임계값 (수치오차 1e-10 허용)
 
-    # 6. 과열 분할매도 (1~4단) 및 O4B / O4P / 4단 해제 가드
+    # 6. [G3] 과열 분할매도 (1~4단) 및 4단 해제 가드 (V2: O4B / O4P 예외 없음, 4단은 무조건 0%)
     use_overheat_split: bool = True
     overheat1_enter: float = 140.0
     overheat1_exit: float = 132.0
@@ -61,30 +62,30 @@ class StrategyConfig:
     tqqq_er20_len: int = 20
     tqqq_er20_thr: float = 0.30         # > +0.30 일 때만 90%/80% 제한 해제
 
-    # O4B (과열 4단 부스터: 30%)
-    o4_booster_pct: float = 0.30
+    # V2에서는 과열 4단 예외 재진입(O4B/O4P)을 사용하지 않음 (호환성 유지용 상수)
+    use_o4b_o4p: bool = False
+    o4_booster_pct: float = 0.0
     o4_booster_min_dist: float = 157.0
     o4_booster_max_dist: float = 180.0
-    o4_booster_q_ret1_thr: float = 0.0025  # QQQ 1일 수익률 >= +0.25% (3일 비교 >= 0)
-
-    # O4P (과열 4단 부분 진입: 70%)
+    o4_booster_q_ret1_thr: float = 0.0025
     oh4_pre_release_buy_level: float = 129.0
-    oh4_pre_release_buy_pct: float = 0.70
+    oh4_pre_release_buy_pct: float = 0.0
     qqq_er59_len: int = 59
-    qqq_er59_thr: float = 0.05          # >= +0.05 및 거래량 유효 시 허용
+    qqq_er59_thr: float = 0.05
 
     # 과열 4단 해제 후 재진입 가드
     oh4_guard_cap_pct: float = 0.95     # 4단 해제 후 상한 95%
     oh4_release_slope_days: int = 4     # 이격도 기울기 >= 0 연속 4회 시 해제
 
-    # 7. 원금 보호 손절 및 RSI 재진입 제한
+    # 7. [G4] 원금 보호 손절(-7.0%) 및 RSI(14) 재진입 제한
     use_stable_stops: bool = True
-    principal_stop_pct: float = 0.9287  # 75% 이상 진입 기준가 대비 92.87% 이하 시 손절
+    principal_stop_pct: float = 0.93    # V2: 75% 이상 진입 체결 시가 대비 93.00%(-7.00%) 이하 시 손절
+    use_next_open_stop_anchor: bool = True  # 진입 신호 익일 시가(Open)를 손절 기준가로 사용
     rsi_length: int = 14                # QQQ Wilder RSI(14)
     rsi_warmup_bars: int = 300
     rsi_reentry_thr: float = 43.0       # QQQ RSI >= 43.0 시 잠금 우회 허용
 
-    # 8. SPY 200일선 필터
+    # 8. [G5] SPY 200일선 필터
     use_spy_filter: bool = True
     spy_enter_pct: float = 96.50        # SPY 상승 추세 전환 기준(%)
     spy_exit_pct: float = 95.70         # SPY 하락 추세 전환 기준(%)
@@ -99,7 +100,7 @@ class StrategyConfig:
     use_vix_buy_support: bool = True    # VIX 매수보조 (기본 활성)
     vix_buy_support_days: int = 5       # VIX <= 31 연속 확인일수 (5일)
 
-    # 10. T3 롱 전용 위험관리 (QQQ 단기약세 + 금리/달러)
+    # 10. [G6] T3 거시 금리·달러 발작 필터 (QQQ 단기약세 + DXY + 미 국채 4종)
     use_t3_d80_filter: bool = True
     use_q06: bool = True                # QQQ ER10 <= -0.300 약세 조건 포함
     qqq_er10_len: int = 10
@@ -122,9 +123,9 @@ class StrategyConfig:
     t3_dgs20_chg_len: int = 100         # DGS20Y 100관측 변화폭 기간
     t3_dgs20_chg_thr: float = 0.15      # > +0.15%p
 
-    # 11. D7 비TQQQ 자금 (단기채 / 현금 분리)
-    d7_enabled: bool = True
-    d7_same_session: bool = True        # 당일 체결·매도대금 재사용 가능
+    # 11. 포지션 표시 방식 (False: V2 원신호 비중만 깔끔하게 표시)
+    d7_enabled: bool = False
+    d7_same_session: bool = True
 
     # 12. 경계 근접 재확인 문구 설정
     use_oh_audit_fail_note: bool = True

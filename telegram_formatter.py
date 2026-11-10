@@ -1,7 +1,6 @@
 """
-변형티큐법 텔레그램 알림 메시지 포맷터 (Telegram Formatter)
-원본 Pine Script v6의 HTML 태그(<b>, <u>), 포지션 섹션(alertPositionSection),
-D7 단기채/현금 배분, ER10/20/59, 익일 QQQ 기준가, T3 금리·달러 요약을 구성합니다.
+변형티큐(V2) 텔레그램 알림 메시지 포맷터 (Telegram Formatter)
+V2 원신호 목표비중 표시, ER10/20, 익일 QQQ 기준가, T3 금리·달러(전일 확정치) 요약을 구성합니다.
 """
 
 from __future__ import annotations
@@ -40,43 +39,32 @@ def _format_position_section(
     cfg: StrategyConfig,
 ) -> str:
     """
-    Pine Script alertPositionSection 동일 구현:
-    - 비중 유지 시: 🔒 <b>현재 포지션</b>
-    - 비중 변경 시: ⛔ <b>이전 포지션</b> -> ✅ <b>목표 포지션</b>
+    V2 원신호 포지션 섹션:
+    - 비중 유지 시: 🔒 <b>현재 포지션 (V2 원신호)</b>
+    - 비중 변경 시: ⛔ <b>이전 포지션</b> -> ✅ <b>목표 포지션 (V2 원신호)</b>
     """
     prev_w = K.code_weight(prev_code)
     next_w = K.code_weight(next_code)
-    same_weights = abs(prev_w - next_w) < 1e-9 and (
-        not cfg.d7_enabled or abs(snap.before_bill - snap.target_bill) < 1e-9
-    )
+    same_weights = abs(prev_w - next_w) < 1e-9
 
-    prev_icon = K.alert_pos_icon(prev_code, prev_role)
-    next_icon = K.alert_pos_icon(next_code, next_role)
+    prev_icon = K.alert_pos_icon(prev_code, 0)
+    next_icon = K.alert_pos_icon(next_code, 0)
 
-    if cfg.d7_enabled:
-        prev_text = K.d7_breakdown(
-            snap.before_tq, snap.before_bill, snap.before_cash, prev_icon, True
-        )
-        next_raw = K.d7_breakdown(
-            snap.target_tq, snap.target_bill, snap.target_cash, next_icon, True
-        )
-    else:
-        prev_text = f"{K.asset_name_alert(prev_code)} {prev_icon}"
-        next_raw = f"{K.asset_name_alert(next_code)} {next_icon}"
-
+    prev_text = f"{K.asset_name_alert(prev_code)} {prev_icon}"
+    next_raw = f"{K.asset_name_alert(next_code)} {next_icon}"
     next_text = K.alert_underline_position(next_raw)
 
     if same_weights:
-        return f"🔒 <b>현재 포지션</b>\n{next_text}"
-    return f"⛔ <b>이전 포지션</b>\n{prev_text}\n✅ <b>목표 포지션</b>\n{next_text}"
+        return f"🔒 <b>현재 포지션 (V2 원신호)</b>\n{next_text}"
+    return f"⛔ <b>이전 포지션</b>\n{prev_text}\n✅ <b>목표 포지션 (V2 원신호)</b>\n{next_text}"
 
 
 def _format_vix_line(snap: DecisionSnapshot, cfg: StrategyConfig) -> str:
     if not cfg.use_vix_filter:
         val_str = f"{snap.vix_c:.2f}" if snap.vix_c is not None else "미확인"
-        return f"• VIX: {val_str} (필터 OFF)"
+        return f"• VIX(전일 확정): {val_str} (필터 OFF)"
     if snap.vix_c is None:
-        return "• VIX: 미확인"
+        return "• VIX(전일 확정): 미확인 (매수보조 5/5 간주)"
 
     chg_str = ""
     if snap.vix_p is not None and snap.vix_p > 0:
@@ -97,7 +85,7 @@ def _format_vix_line(snap: DecisionSnapshot, cfg: StrategyConfig) -> str:
     else:
         status = f"🟠 재매수 기준({cfg.vix_rebuy_threshold:.0f}) 상회 (0/{req})"
 
-    return f"• VIX: <b>{snap.vix_c:.2f}</b>{chg_str} | {status}"
+    return f"• VIX(전일 확정): <b>{snap.vix_c:.2f}</b>{chg_str} | {status}"
 
 
 def _format_dgs_line(
@@ -115,7 +103,7 @@ def _format_dgs_line(
 
 
 def _format_next_qqq_line(snap: DecisionSnapshot, cfg: StrategyConfig) -> str:
-    """주석 17절: 익일 QQQ T3 약세/해제 기준가 표시"""
+    """익일 QQQ T3 약세/해제 기준가 표시"""
     macro_risk_active = snap.t3_short_risk or snap.t3_long_risk or (
         (snap.dgs2_risk and snap.dgs6m_risk)
         or (snap.dxy_risk and (snap.us10y_risk or snap.dgs20_risk))
@@ -157,22 +145,18 @@ def format_telegram_message(
 
     if snap.phase == "FINAL":
         header = (
-            f"🚨 <b>[변형티큐법] 2차(FINAL) 포지션 변경 알림</b>\n"
+            f"🚨 <b>[변형티큐(V2)] 2차(FINAL) 포지션 변경 알림</b>\n"
             f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
         )
         if primary_snap is not None:
-            p_icon = K.alert_pos_icon(primary_snap.target_asset_code, primary_snap.target_o4_role)
-            f_icon = K.alert_pos_icon(snap.target_asset_code, snap.target_o4_role)
-            p_str = K.d7_breakdown(
-                primary_snap.target_tq, primary_snap.target_bill, primary_snap.target_cash, p_icon, True
-            )
-            f_str = K.d7_breakdown(
-                snap.target_tq, snap.target_bill, snap.target_cash, f_icon, True
-            )
+            p_icon = K.alert_pos_icon(primary_snap.target_asset_code, 0)
+            f_icon = K.alert_pos_icon(snap.target_asset_code, 0)
+            p_str = f"{K.asset_name_alert(primary_snap.target_asset_code)} {p_icon}"
+            f_str = K.alert_underline_position(f"{K.asset_name_alert(snap.target_asset_code)} {f_icon}")
             change_section = (
-                f"🔄 <b>포지션 변경 내역</b>\n"
+                f"🔄 <b>포지션 변경 내역 (V2 원신호)</b>\n"
                 f"• 1차 판정(마감 직후): {p_str}\n"
-                f"• <b>2차 확정(최종 비중): <u>{f_str}</u></b>"
+                f"• <b>2차 확정(최종 비중): {f_str}</b>"
             )
         else:
             change_section = _format_position_section(
@@ -189,11 +173,11 @@ def format_telegram_message(
         return "\n\n".join([header, change_section, reason_section])
 
     header = (
-        f"📊 <b>[변형티큐법] 1차(PRIMARY) 마감 판정</b>\n"
+        f"📊 <b>[변형티큐(V2)] 1차(PRIMARY) 마감 판정</b>\n"
         f"📅 미국 거래일: <b>{snap.trade_date}</b> (발송: {now_kst})"
     )
 
-    # 포지션 섹션 (1차는 전일 대비)
+    # 포지션 섹션 (V2 원신호 비중만 표시)
     pos_section = _format_position_section(
         snap.prev_asset_code,
         snap.prev_o4_role,
@@ -202,14 +186,7 @@ def format_telegram_message(
         snap,
         cfg,
     )
-    final_diff_note = ""
-
-    # D7 안내 노트
-    d7_note_lines = ["<i>※ 목표비중 기준 · 실제 체결 확인 아님</i>"]
-    if cfg.d7_enabled and not snap.d7_history_complete:
-        d7_note_lines.append("<i>※ D7: 초기 8거래일 이력 누적 중</i>")
-    elif cfg.d7_enabled and not cfg.d7_same_session:
-        d7_note_lines.append("<i>※ 단기채 신규 편입 보류: 당일 재사용 불가</i>")
+    note_line = "<i>※ V2 원신호 목표비중 기준 · 비중 변경 시 익일 시가(Open) 체결</i>"
 
     # 판정 사유
     tag_suffix = f" [{snap.tag_text}]" if snap.tag_text else ""
@@ -232,9 +209,11 @@ def format_telegram_message(
     stop_line = ""
     if snap.principal_stop_price is not None:
         stop_dist_pct = ((snap.principal_stop_price / snap.t_c) - 1.0) * 100.0
+        new_high_entry = K.is_high_exposure(snap.target_asset_code) and not K.is_high_exposure(snap.prev_asset_code)
+        anchor_note = "익일 시가 체결 시 확정" if new_high_entry else f"진입시가 대비 {cfg.principal_stop_pct*100:.2f}%"
         stop_line = (
             f"\n• 원금보호 로스컷: <b>${snap.principal_stop_price:.2f}</b> "
-            f"({_fmt_pct(stop_dist_pct)} / 진입기준가 대비 {cfg.principal_stop_pct*100:.2f}%)"
+            f"({_fmt_pct(stop_dist_pct)} / {anchor_note})"
         )
     elif snap.reentry_lock:
         stop_line = f"\n• 손절 후 재진입 잠금: 🔴 활성 (QQQ RSI ≥ {cfg.rsi_reentry_thr:.0f} 필요)"
@@ -242,7 +221,7 @@ def format_telegram_message(
     tqqq_section = (
         f"📈 <b>[TQQQ &amp; 과열/방어 지표]</b>\n"
         f"• TQQQ 종가: <b>${snap.t_c:.2f}</b> ({_fmt_pct(snap.t_ret_pct)}) | 200일선: ${snap.t_ma200:.2f}\n"
-        f"• 200일 이격도: <b>{snap.dist200:.2f}%</b> ({t_trend_str})\n"
+        f"• 200일 이격도: <b>{snap.dist200:.2f}%</b> ({t_trend_str}, 진입 {cfg.dist200_enter_band:.0f}% / 이탈 {cfg.dist200_exit_band:.0f}%)\n"
         f"• 45일 기울기: {slope_str}{slope_boost_badge} | 20일 변동성: {snap.t_v20:.4f} ({vol_badge})\n"
         f"• 과열 단계: <b>{oh_str}</b>"
         f"{er20_line}"
@@ -253,10 +232,6 @@ def format_telegram_message(
     q_bull_str = "정배열(SMA3&gt;161 🟢)" if snap.q_bull else "역배열(SMA3≤161 ⚪)"
     rsi_str = f"{snap.qqq_rsi14:.2f}" if snap.qqq_rsi14 is not None else "미확인"
     er10_str = f"{snap.qqq_er10:+.3f}" if snap.qqq_er10 is not None else "대기"
-    er59_line = ""
-    if snap.overheat_stage == 4:
-        er59_str = f"{snap.qqq_er59:+.3f}" if snap.qqq_er59 is not None else "대기"
-        er59_line = f"\n• QQQ 59일 ER(O4P): <b>{er59_str}</b> (기준 ≥ +0.050)"
 
     next_qqq_line = _format_next_qqq_line(snap, cfg)
     spy_status = "🟢 상승추세" if snap.spy_bull else "🔴 하락추세(현금제한)"
@@ -267,13 +242,12 @@ def format_telegram_message(
         f"• QQQ 종가: <b>${snap.q_c:.2f}</b> ({_fmt_pct(snap.q_ret1_pct)}) | 최근 3봉: {snap.qqq3_emoji}\n"
         f"• QQQ 추세: {q_bull_str} | RSI(14): {rsi_str}\n"
         f"• QQQ 10일 ER(T3): <b>{er10_str}</b> (약세 기준 ≤ -0.300)"
-        f"{er59_line}"
         f"{next_qqq_line}\n"
         f"• SPY 200일 이격도: <b>{snap.spy_dist200:.2f}%</b> ({spy_status})\n"
         f"{vix_line}"
     )
 
-    # 3. T3 거시위험 (금리 & 달러) 섹션
+    # 3. T3 거시위험 (금리 & 달러 - 전일 확정치 shift(1)) 섹션
     weak_str = "🔴 약세(SMA3하회 또는 ER10≤-0.30)" if snap.t3_m09_weak else "🟢 강세(정상)"
     macro_branch_str = K.t3_risk_branch_status_text(snap.t3_short_risk, snap.t3_long_risk)
     dxy_line = (
@@ -282,7 +256,7 @@ def format_telegram_message(
         if (snap.dxy_c is not None and snap.dxy_roc is not None)
         else "  - DXY(120일): 미확인"
     )
-    obs_note = f" (FRED 관측일: {snap.dgs_obs_date})" if snap.dgs_obs_date else ""
+    obs_note = f" (전일 확정 기준: {snap.dgs_obs_date})" if snap.dgs_obs_date else " (전일 확정 기준)"
 
     t3_section = (
         f"🏦 <b>[T3 거시위험 관리{obs_note}]</b>\n"
@@ -308,12 +282,12 @@ def format_telegram_message(
         warn_items = "\n".join(f"  ⚠️ {w}" for w in snap.border_warnings)
         footer_lines.append(
             f"\n🔎 <b>[경계 근접 재확인 안내]</b>\n{warn_items}\n"
-            f"<i>※ 데이터 공급자 간 미세 오차 가능 구간이므로 트레이딩뷰 원천 차트와 교차 확인을 권장합니다.</i>"
+            f"<i>※ 데이터 공급자 간 미세 오차 가능 구간이므로 원천 차트와 교차 확인을 권장합니다.</i>"
         )
 
     sections = [
         header,
-        f"{pos_section}{final_diff_note}\n" + "\n".join(d7_note_lines),
+        f"{pos_section}\n{note_line}",
         reason_section,
         tqqq_section,
         market_section,

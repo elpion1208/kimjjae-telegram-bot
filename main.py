@@ -103,13 +103,13 @@ def run_bot(
 
     latest_trade_date = engine.valid_dates[-1]
     persisted = load_persisted_state(state_path)
-    saved_trade_date = persisted.get("trade_date"
+    saved_trade_date = persisted.get("trade_date")
     if saved_trade_date and latest_trade_date < saved_trade_date and mode.lower() != "test" and not force_send:
         logger.warning(
             f"수집된 최신 거래일({latest_trade_date})이 저장된 거래일({saved_trade_date})보다 과거입니다. "
             "외부 데이터 일시 누락으로 판단하여 실행을 건너뜁니다."
         )
-        return 0)
+        return 0
     primary_sent_today = (saved_trade_date == latest_trade_date) and bool(
         persisted.get("primary_sent", False)
     )
@@ -123,16 +123,9 @@ def run_bot(
     else:
         pre_day_state = replayed_pre_day_state
 
-    # 실행 모드 결정:
-    # - auto일 경우:
-    #   1) state.json에 당일 1차 발송 이력(primary_sent_today)이 있거나,
-    #   2) 미국 정규장 마감 후 18분 이상 경과(예: 16:18 ET 이후 도는 2차 스케줄 또는 서머타임 중 21:xx UTC 스케줄)했으면
-    #      무조건 'final'(2차 변경 감시) 모드로 동작하여 1차 리포트가 중복 발송되는 것을 원천 차단합니다.
     now_minutes = now_et.hour * 60 + now_et.minute
     close_minutes = close_hour_et * 60
     minutes_since_close = now_minutes - close_minutes
-    # ※ GitHub 스케줄은 수십 분~수 시간 지연될 수 있으므로, 시간 기준이 아니라
-    #    state.json의 당일 1차 발송 기록만으로 1차/2차를 판별합니다. (지연되어도 1차는 반드시 1번 발송)
     effective_mode = mode.lower()
     if effective_mode == "auto":
         effective_mode = "final" if primary_sent_today else "primary"
@@ -191,13 +184,10 @@ def run_bot(
     # 3. 2차 (FINAL) 확정 신호 변경 감시 모드
     # ------------------------------------------------------------
     if effective_mode == "final":
-        # 2차 모드에서는 절대 1차 전체 리포트를 재발송하지 않으며,
-        # 당일 1차 판정(또는 이전 통지 비중) 대비 목표비중이 실제로 바뀐 경우에만 간결한 포지션 변경 알림을 보냅니다.
         _, calc_primary_snap = engine.step_one_day(
             pre_day_state, latest_trade_date, phase="PRIMARY", is_latest_day=False
         )
 
-        # 당일 시작 상태(pre_day_state = c084DayStart)에서 최신 확정 VIX·금리·DXY로 재판정
         final_post_state, final_snap = engine.step_one_day(
             pre_day_state, latest_trade_date, phase="FINAL", is_latest_day=True
         )
@@ -246,11 +236,9 @@ def run_bot(
         else:
             logger.info(
                 f"✅ 2차(FINAL) 점검 완료 ({latest_trade_date}): "
-                f"목표비중 변동 없음 (TQ {K.code_pct_str(final_snap.target_asset_code)}%, "
-                f"단기채 {K.d7_pct_str(final_snap.target_bill)}%). "
-                f"원본 규칙에 따라 중복 알림을 발송하지 않습니다."
+                f"목표비중 변동 없음 (TQQQ {K.code_pct_str(final_snap.target_asset_code)}%). "
+                f"중복 알림을 발송하지 않습니다."
             )
-            # 상태 파일의 최신 확정 스냅샷만 조용히 갱신
             persisted["trade_date"] = latest_trade_date
             persisted["primary_sent"] = True
             persisted["last_notified_target_code"] = last_code
@@ -267,7 +255,7 @@ def run_bot(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="변형티큐법 텔레그램 알림 봇")
+    parser = argparse.ArgumentParser(description="변형티큐(V2) 텔레그램 알림 봇")
     parser.add_argument(
         "--mode",
         choices=["auto", "primary", "final", "test"],
