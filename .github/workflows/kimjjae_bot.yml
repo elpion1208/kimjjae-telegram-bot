@@ -127,7 +127,8 @@ jobs:
             cp /tmp/state_backup.json "$STATE_FILE"
             git add -f "$STATE_FILE"
           fi
-          if git diff --staged --quiet; then\n            echo "state.json 변경사항 없음"
+          if git diff --staged --quiet; then
+            echo "state.json 변경사항 없음"
           else
             git commit -m "chore: update strategy state.json [skip ci]"
             git push origin "HEAD:${{ github.ref_name }}" || true
