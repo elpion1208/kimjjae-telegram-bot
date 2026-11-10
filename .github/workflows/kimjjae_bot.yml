@@ -37,17 +37,17 @@ on:
     - cron: '3 18 * * 1-5'
     - cron: '25 18 * * 1-5'
 
-  # GitHub 웹사이트 Actions 탭에서 언제든 수동 실행(테스트 발송 포함) 가능
+  # GitHub 웹사이트 Actions 탭 및 cron-job.org API 호출에서 언제든 실행 가능
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 모드 (test: 즉시 테스트 발송 / auto: 자동 1·2차 판정 / primary: 1차 강제 / final: 2차 강제)'
-        required: true
-        default: 'test'
+        description: '실행 모드 (auto: 자동 판정 / test: 즉시 테스트 발송 / primary: 1차 강제 / final: 2차 강제)'
+        required: false
+        default: 'auto'
         type: choice
         options:
-          - test
           - auto
+          - test
           - primary
           - final
       force_send:
@@ -127,8 +127,7 @@ jobs:
             cp /tmp/state_backup.json "$STATE_FILE"
             git add -f "$STATE_FILE"
           fi
-          if git diff --staged --quiet; then
-            echo "state.json 변경사항 없음"
+          if git diff --staged --quiet; then\n            echo "state.json 변경사항 없음"
           else
             git commit -m "chore: update strategy state.json [skip ci]"
             git push origin "HEAD:${{ github.ref_name }}" || true
