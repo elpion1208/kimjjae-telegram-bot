@@ -1,6 +1,6 @@
 """
-김째매매법 판정 엔진 (Strategy Engine)
-원본 Pine Script v6 (C097)의 1~17절 규칙과 1차(PRIMARY)·2차(FINAL) 상태 전이 로직을 수행합니다.
+변형티큐(V2) 전략 판정 엔진 (Strategy Engine)
+변형티큐(V2) 완전 명세서의 9단계 상태머신 규칙과 1차(PRIMARY)·2차(FINAL) 상태 전이 로직을 수행합니다.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import kernel as K
 @dataclass
 class DayState:
     """
-    Pine Script C084DayState + D7 이력 상태.
-    당일 판정 전 상태(c084DayStart)를 보존하여 같은 날 2차(FINAL) 재판정 시
+    변형티큐(V2) 일별 상태머신 상태(ByeonhyeongDayState 대응).
+    당일 판정 전 상태(pre_day_state)를 보존하여 같은 날 2차(FINAL) 재판정 시
     동일한 당일 시작 상태에서 최신 확정자료로 다시 판정할 수 있게 합니다.
     """
     last_processed_date: Optional[str] = None
@@ -31,6 +31,7 @@ class DayState:
     full_entry_close: Optional[float] = None
     full_high_close: Optional[float] = None
     last_principal_stop_price: Optional[float] = None
+    pending_open_anchor: bool = False
     oh4_reentry_guard: bool = False
     oh4_slope_ok_cnt: int = 0
     oh4_pre_release_active: bool = False
@@ -43,7 +44,7 @@ class DayState:
     vix_risk_lock: bool = False
     vix_below_cnt: int = 0
 
-    # D7 (단기채 / 현금 분리) 최근 8거래일 TQQQ 비중 기록 및 현재 단기채 비중
+    # D7 (단기채 / 현금 분리 - V2 기본 비활성)
     d7_keys: List[str] = field(default_factory=list)
     d7_weights: List[float] = field(default_factory=list)
     d7_bill_state: float = 0.0
@@ -72,7 +73,7 @@ class DecisionSnapshot:
     before_t3_code: int
     before_t3_o4_role: int
 
-    # D7 비중 (TQ / 단기채 / 현금)
+    # 목표 비중 (TQ / 단기채 / 현금)
     before_tq: float
     before_bill: float
     before_cash: float
@@ -176,27 +177,44 @@ class DecisionSnapshot:
     usdkrw_p: Optional[float]
     border_warnings: List[str] = field(default_factory=list)
 
+    # 기간별 전략 수익률 및 TQQQ 벤치마크 수익률 (YTD / 최근 3개월 / 이번달 MTD)
+    ytd_ret_pct: Optional[float] = None
+    tqqq_ytd_pct: Optional[float] = None
+    ret_3m_pct: Optional[float] = None
+    tqqq_3m_pct: Optional[float] = None
+    mtd_ret_pct: Optional[float] = None
+    tqqq_mtd_pct: Optional[float] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
-def _lookup_obs_and_ref(
+def _align_macro_to_trading_days(
     series: pd.Series,
-    trade_date: str,
-    chg_len: int,
-) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    trading_idx: pd.Index,
+    ffill_limit: int = 7,
+) -> Tuple[pd.Series, pd.Series]:
     """
-    주석 1 · 12 · 14절:
-    해당 거래일(trade_date) 이하의 가장 최신 유효 관측치(c)와
-    그로부터 chg_len 관측 이전의 값(ref), 그리고 관측일(obs_date)을 반환합니다.
+    V2 명세서 4번 변경점:
+    거시지표(국채금리·VIX·DXY)를 주식 거래일 인덱스(trading_idx)에 맞춰
+    최대 7일 전방 채움(ffill(limit=7))으로 정렬하고, 원천 관측일(obs_date) 시계열을 함께 반환합니다.
     """
-    sub = series[series.index <= trade_date].dropna()
-    if len(sub) <= chg_len:
-        return None, None, None
-    c_val = float(sub.iloc[-1])
-    ref_val = float(sub.iloc[-1 - chg_len])
-    obs_date = str(sub.index[-1])
-    return c_val, ref_val, obs_date
+    if series is None or series.empty:
+        return (
+            pd.Series(np.nan, index=trading_idx, dtype=float),
+            pd.Series(None, index=trading_idx, dtype=object),
+        )
+    clean = series.dropna()
+    if clean.empty:
+        return (
+            pd.Series(np.nan, index=trading_idx, dtype=float),
+            pd.Series(None, index=trading_idx, dtype=object),
+        )
+    union_idx = trading_idx.union(clean.index).sort_values()
+    val_aligned = clean.reindex(union_idx).ffill(limit=ffill_limit).reindex(trading_idx)
+    dt_raw = pd.Series(clean.index.astype(str), index=clean.index, dtype=object)
+    dt_aligned = dt_raw.reindex(union_idx).ffill(limit=ffill_limit).reindex(trading_idx)
+    return val_aligned, dt_aligned
 
 
 def _check_border_warnings(
@@ -217,7 +235,6 @@ def _check_border_warnings(
     dgs20_chg: Optional[float],
 ) -> List[str]:
     """
-    Pine Script useOhAuditFailNote / ohAuditBorderTolPp 구현:
     주요 임계값(경계)에 허용폭(기본 0.05) 이내로 근접한 지표가 있으면
     데이터 공급자 간 미세 오차 가능성을 사용자에게 알려줍니다.
     """
@@ -232,12 +249,12 @@ def _check_border_warnings(
         t = tol if custom_tol is None else custom_tol
         return abs(val - thr) <= t
 
-    # TQQQ 200일 이격도 주요 경계
+    # TQQQ 200일 이격도 주요 경계 (V2: 102.00% 진입 / 100.00% 청산)
     dist_thresholds = [
-        (cfg.dist200_enter_band, "200일 진입(102.27%)"),
-        (cfg.dist200_exit_band, "200일 청산(100.28%)"),
-        (cfg.early_full_dist, "조기100%(101.00%)"),
-        (cfg.q_bull_weight_floor_dist, "보조비중(97.00%)"),
+        (cfg.dist200_enter_band, f"200일 진입({cfg.dist200_enter_band:.2f}%)"),
+        (cfg.dist200_exit_band, f"200일 청산({cfg.dist200_exit_band:.2f}%)"),
+        (cfg.early_full_dist, f"조기100%({cfg.early_full_dist:.2f}%)"),
+        (cfg.q_bull_weight_floor_dist, f"보조비중({cfg.q_bull_weight_floor_dist:.2f}%)"),
         (cfg.overheat1_enter, "과열1단 진입(140%)"),
         (cfg.overheat1_exit, "과열1단 해제(132%)"),
         (cfg.overheat2_enter, "과열2단 진입(144%)"),
@@ -246,7 +263,6 @@ def _check_border_warnings(
         (cfg.overheat3_exit, "과열3단 해제(140%)"),
         (cfg.overheat4_enter, "과열4단 진입(158%)"),
         (cfg.overheat4_exit, "과열4단 해제(118%)"),
-        (cfg.oh4_pre_release_buy_level, "O4P 이격도(129%)"),
     ]
     for thr, label in dist_thresholds:
         if _near(dist200, thr, tol):
@@ -264,8 +280,6 @@ def _check_border_warnings(
         warnings.append(f"QQQ ER10({qqq_er10:.3f})이 약세 경계(-0.300) 근접")
     if _near(t_er20, cfg.tqqq_er20_thr, 0.01):
         warnings.append(f"TQQQ ER20({t_er20:.3f})이 과열해제 경계(+0.300) 근접")
-    if _near(qqq_er59, cfg.qqq_er59_thr, 0.01):
-        warnings.append(f"QQQ ER59({qqq_er59:.3f})이 O4P 경계(+0.050) 근접")
     if _near(qqq_rsi14, cfg.rsi_reentry_thr, 0.3):
         warnings.append(f"QQQ RSI({qqq_rsi14:.2f})가 재진입 경계(43.0) 근접")
     if _near(dxy_roc, cfg.t3_dxy_roc_thr, tol):
@@ -284,7 +298,7 @@ def _check_border_warnings(
 
 class StrategyEngine:
     """
-    김째매매법 일자별 상태 재생 및 당일 1차(PRIMARY)/2차(FINAL) 판정기
+    변형티큐(V2) 일자별 상태 재생 및 당일 1차(PRIMARY)/2차(FINAL) 판정기
     """
 
     def __init__(self, bundle: MarketDataBundle, cfg: StrategyConfig = DEFAULT_CONFIG):
@@ -293,9 +307,10 @@ class StrategyEngine:
         self._prepare_indicators()
 
     def _prepare_indicators(self) -> None:
-        """전체 시계열에 대해 이동평균, 변동성, 기울기, RSI, ER(10/20/59)을 계산합니다."""
+        """전체 시계열에 대해 이동평균, 변동성, 기울기, RSI, ER(10/20/59) 및 1거래일 지연 거시지표를 계산합니다."""
         b = self.bundle
         c = self.cfg
+        idx = b.tqqq_close.index
 
         # TQQQ 파생 지표
         self.t_ma200 = K.calc_sma_series(b.tqqq_close, 200)
@@ -307,14 +322,15 @@ class StrategyEngine:
             b.tqqq_close, c.tqqq_er20_len
         )
 
-        # QQQ 파생 지표
+        # QQQ 파생 지표 (V2: use_tv_default_rsi=False 이므로 수정종가 qc 기준 Wilder RSI 산출)
         self.q_ma3 = K.calc_sma_series(b.qqq_close, 3)
         self.q_ma161 = K.calc_sma_series(b.qqq_close, 161)
         self.q_t3ma = K.calc_sma_series(b.qqq_close, c.t3_q_weak_ma_len)
         self.q_next_ma = (b.qqq_close + b.qqq_close.shift(1)) / 2.0  # 익일 SMA3 역산용
         self.q_ret1 = (b.qqq_close / b.qqq_close.shift(1)) - 1.0
-        self.q_ret3 = (b.qqq_close / b.qqq_close.shift(2)) - 1.0  # 주석 6절: 종가 / 2거래일 전 종가 - 1
-        self.q_rsi14 = K.calc_rsi_wilder_series(b.qqq_rsi_close, c.rsi_length)
+        self.q_ret3 = (b.qqq_close / b.qqq_close.shift(2)) - 1.0
+        rsi_src = b.qqq_rsi_close if c.use_tv_default_rsi else b.qqq_close
+        self.q_rsi14 = K.calc_rsi_wilder_series(rsi_src, c.rsi_length)
         self.q_er10, self.q_er10_q9, self.q_er10_abs9 = K.calc_er_series(
             b.qqq_close, c.qqq_er10_len
         )
@@ -323,6 +339,42 @@ class StrategyEngine:
         # SPY 파생 지표
         self.s_ma200 = K.calc_sma_series(b.spy_close, 200)
         self.s_dist200 = (b.spy_close / self.s_ma200) * 100.0
+
+        # 거시지표(VIX, DXY, FRED 국채금리 4종) 거래일 정렬(ffill(limit=7)) 및 지연(shift(lag))
+        lag = max(0, int(c.macro_lag_days))
+        vix_al, _ = _align_macro_to_trading_days(b.vix_close, idx, ffill_limit=7)
+        dxy_al, _ = _align_macro_to_trading_days(b.dxy_daily_close, idx, ffill_limit=7)
+        d6m_al, d6m_dt = _align_macro_to_trading_days(b.dgs6m, idx, ffill_limit=7)
+        d2y_al, d2y_dt = _align_macro_to_trading_days(b.dgs2, idx, ffill_limit=7)
+        d10y_al, d10y_dt = _align_macro_to_trading_days(b.dgs10, idx, ffill_limit=7)
+        d20y_al, d20y_dt = _align_macro_to_trading_days(b.dgs20, idx, ffill_limit=7)
+
+        self.vix_c_lagged = vix_al.shift(lag)
+        self.vix_p_lagged = vix_al.shift(lag + 1)
+
+        self.dxy_c_lagged = dxy_al.shift(lag)
+        self.dxy_ref_lagged = dxy_al.shift(lag + c.t3_dxy_roc_len)
+        self.dxy_roc_lagged = ((self.dxy_c_lagged / self.dxy_ref_lagged) - 1.0) * 100.0
+
+        self.dgs6m_c_lagged = d6m_al.shift(lag)
+        self.dgs6m_ref_lagged = d6m_al.shift(lag + c.t3_dgs6m_chg_len)
+        self.dgs6m_chg_lagged = self.dgs6m_c_lagged - self.dgs6m_ref_lagged
+        self.dgs6m_obs_lagged = d6m_dt.shift(lag)
+
+        self.dgs2_c_lagged = d2y_al.shift(lag)
+        self.dgs2_ref_lagged = d2y_al.shift(lag + c.t3_dgs2_chg_len)
+        self.dgs2_chg_lagged = self.dgs2_c_lagged - self.dgs2_ref_lagged
+        self.dgs2_obs_lagged = d2y_dt.shift(lag)
+
+        self.us10y_c_lagged = d10y_al.shift(lag)
+        self.us10y_ref_lagged = d10y_al.shift(lag + c.t3_us10y_chg_len)
+        self.us10y_chg_lagged = self.us10y_c_lagged - self.us10y_ref_lagged
+        self.us10y_obs_lagged = d10y_dt.shift(lag)
+
+        self.dgs20_c_lagged = d20y_al.shift(lag)
+        self.dgs20_ref_lagged = d20y_al.shift(lag + c.t3_dgs20_chg_len)
+        self.dgs20_chg_lagged = self.dgs20_c_lagged - self.dgs20_ref_lagged
+        self.dgs20_obs_lagged = d20y_dt.shift(lag)
 
         # 유효 거래일 목록 (200일 이동평균이 준비된 시점부터)
         valid_mask = (~self.t_dist200.isna()) & (~self.q_ma161.isna()) & (~self.s_dist200.isna())
@@ -337,21 +389,22 @@ class StrategyEngine:
     ) -> Tuple[DayState, DecisionSnapshot]:
         """
         단일 거래일(trade_date)에 대해 base_state로부터 다음 상태와 판정 스냅샷을 계산합니다.
-        Pine Script의 2400~2872행 로직을 그대로 따릅니다.
+        변형티큐(V2) 9단계 일봉 상태머신 판정 순서를 정확히 따릅니다.
         """
         cfg = self.cfg
         b = self.bundle
         state = copy.deepcopy(base_state)
 
         prev_asset = state.asset_code
-        prev_o4_role = (
-            K.o4_role_from_flags(state.o4_booster_active, state.oh4_pre_release_active)
-            if K.code_weight(prev_asset) > 1e-9
-            else 0
-        )
+        prev_o4_role = 0
 
-        # 1. 해당 거래일의 주식 원천 값 추출
+        # 1. 해당 거래일의 주식 원천 값 추출 (TQQQ 시가/종가, QQQ, SPY)
         pd_tc = float(b.tqqq_close.loc[trade_date])
+        pd_to = (
+            float(b.tqqq_open.loc[trade_date])
+            if (b.tqqq_open is not None and trade_date in b.tqqq_open.index)
+            else pd_tc
+        )
         t_idx = b.tqqq_close.index.get_loc(trade_date)
         pd_tp = float(b.tqqq_close.iloc[t_idx - 1]) if t_idx > 0 else pd_tc
         pd_t_ma200 = float(self.t_ma200.loc[trade_date])
@@ -359,6 +412,15 @@ class StrategyEngine:
         pd_tv20 = float(self.t_v20.loc[trade_date])
         dist_slope_val = self.t_dist_slope.loc[trade_date]
         dist_slope = None if pd.isna(dist_slope_val) else float(dist_slope_val)
+
+        # [V2 핵심 변경점 3]: 직전 거래일에 75% 이상 신규 진입 신호가 발생했다면,
+        # 실제 진입 체결일인 오늘(익일) 시가(pd_to)로 원금보호 손절 기준가(full_entry_close)를 확정합니다.
+        if cfg.use_next_open_stop_anchor and state.pending_open_anchor and K.is_high_exposure(prev_asset):
+            if pd_to > 0:
+                state.full_entry_close = pd_to
+                state.full_high_close = max(pd_to, pd_tc)
+                state.last_principal_stop_price = pd_to * cfg.principal_stop_pct
+            state.pending_open_anchor = False
 
         pd_q0 = float(b.qqq_close.loc[trade_date])
         q_idx = b.qqq_close.index.get_loc(trade_date)
@@ -387,77 +449,51 @@ class StrategyEngine:
 
         er59_val = self.q_er59.get(trade_date, np.nan)
         a2_er59 = None if pd.isna(er59_val) else float(er59_val)
-        a2_er59_ready = a2_er59 is not None
 
         er10_val = self.q_er10.get(trade_date, np.nan)
         pd_q06_er = None if pd.isna(er10_val) else float(er10_val)
         pd_q06_ready = pd_q06_er is not None
 
-        # 나스닥 거래량 유효성 확인
-        ixic_vol = b.ixic_volume.get(trade_date, np.nan)
-        nas_vol_ready = (not pd.isna(ixic_vol)) and (float(ixic_vol) > 0)
+        # 2. VIX, DXY, FRED 국채금리 4종 추출 (V2: 1거래일 지연 shift(1) 전일 확정치 사용)
+        def _opt_float(s: pd.Series, dt: str) -> Optional[float]:
+            v = s.get(dt, np.nan)
+            return None if pd.isna(v) else float(v)
 
-        # 2. VIX 추출 (1차 PRIMARY일 때는 16:00 ET 5분봉 스냅샷 우선, 2차 FINAL일 때는 확정 일봉 사용)
-        vix_daily_sub = b.vix_close[b.vix_close.index <= trade_date]
-        vix_p = float(vix_daily_sub.iloc[-2]) if len(vix_daily_sub) >= 2 else None
-        if phase == "PRIMARY" and is_latest_day and trade_date in b.vix_primary_close_by_date:
-            pd_vc = float(b.vix_primary_close_by_date[trade_date])
-        elif trade_date in b.vix_close.index:
-            pd_vc = float(b.vix_close.loc[trade_date])
-        elif not vix_daily_sub.empty:
-            pd_vc = float(vix_daily_sub.iloc[-1])
-        else:
-            pd_vc = None
+        pd_vc = _opt_float(self.vix_c_lagged, trade_date)
+        vix_p = _opt_float(self.vix_p_lagged, trade_date)
 
-        # 3. DXY 추출 (주석 12·14절: 당일 확정 B가 있으면 B, 아니면 주식마감 A 스냅샷 사용)
-        dxy_sub = b.dxy_daily_close[b.dxy_daily_close.index <= trade_date]
-        dxy_b_ready = (
-            trade_date in b.dxy_daily_close.index
-            and len(dxy_sub) > cfg.t3_dxy_roc_len
-        )
-        dxy_a_ready = (
-            is_latest_day
-            and b.dxy_cohort_a_date == trade_date
-            and b.dxy_cohort_a_current is not None
-            and b.dxy_cohort_a_ref is not None
-        )
-        if phase == "PRIMARY" and is_latest_day and dxy_a_ready and not dxy_b_ready:
-            pd_dxy_c = float(b.dxy_cohort_a_current)
-            pd_dxy_ref = float(b.dxy_cohort_a_ref)
-            dxy_source_label = "A(장마감 16시)"
-        elif len(dxy_sub) > cfg.t3_dxy_roc_len:
-            pd_dxy_c = float(dxy_sub.iloc[-1])
-            pd_dxy_ref = float(dxy_sub.iloc[-1 - cfg.t3_dxy_roc_len])
-            dxy_source_label = "B(일봉 확정)" if trade_date in b.dxy_daily_close.index else "B(직전 일봉)"
-        elif dxy_a_ready:
-            pd_dxy_c = float(b.dxy_cohort_a_current)
-            pd_dxy_ref = float(b.dxy_cohort_a_ref)
-            dxy_source_label = "A(장마감 16시)"
-        else:
-            pd_dxy_c, pd_dxy_ref = None, None
-            dxy_source_label = "미확인"
+        pd_dxy_c = _opt_float(self.dxy_c_lagged, trade_date)
+        pd_dxy_ref = _opt_float(self.dxy_ref_lagged, trade_date)
+        dxy_roc = _opt_float(self.dxy_roc_lagged, trade_date)
+        dxy_source_label = "전일 확정(shift1)" if pd_dxy_c is not None else "미확인"
 
-        dxy_ok = (
-            pd_dxy_c is not None
-            and pd_dxy_ref is not None
-            and pd_dxy_c > 0
-            and pd_dxy_ref > 0
-        )
-        dxy_roc = ((pd_dxy_c / pd_dxy_ref) - 1.0) * 100.0 if dxy_ok else None
+        dgs6m_c = _opt_float(self.dgs6m_c_lagged, trade_date)
+        dgs6m_ref = _opt_float(self.dgs6m_ref_lagged, trade_date)
+        dgs6m_chg = _opt_float(self.dgs6m_chg_lagged, trade_date)
 
-        # 4. FRED 국채금리 4종 추출
-        dgs6m_c, dgs6m_ref, obs_6m = _lookup_obs_and_ref(b.dgs6m, trade_date, cfg.t3_dgs6m_chg_len)
-        dgs2_c, dgs2_ref, obs_2y = _lookup_obs_and_ref(b.dgs2, trade_date, cfg.t3_dgs2_chg_len)
-        us10y_c, us10y_ref, obs_10y = _lookup_obs_and_ref(b.dgs10, trade_date, cfg.t3_us10y_chg_len)
-        dgs20_c, dgs20_ref, obs_20y = _lookup_obs_and_ref(b.dgs20, trade_date, cfg.t3_dgs20_chg_len)
+        dgs2_c = _opt_float(self.dgs2_c_lagged, trade_date)
+        dgs2_ref = _opt_float(self.dgs2_ref_lagged, trade_date)
+        dgs2_chg = _opt_float(self.dgs2_chg_lagged, trade_date)
 
-        dgs6m_chg = (dgs6m_c - dgs6m_ref) if (dgs6m_c is not None and dgs6m_ref is not None) else None
-        dgs2_chg = (dgs2_c - dgs2_ref) if (dgs2_c is not None and dgs2_ref is not None) else None
-        us10y_chg = (us10y_c - us10y_ref) if (us10y_c is not None and us10y_ref is not None) else None
-        dgs20_chg = (dgs20_c - dgs20_ref) if (dgs20_c is not None and dgs20_ref is not None) else None
-        dgs_obs_date = obs_2y or obs_10y or obs_6m or obs_20y
+        us10y_c = _opt_float(self.us10y_c_lagged, trade_date)
+        us10y_ref = _opt_float(self.us10y_ref_lagged, trade_date)
+        us10y_chg = _opt_float(self.us10y_chg_lagged, trade_date)
 
-        # 5. T3 약세 및 거시위험 판정 (주석 11·12절)
+        dgs20_c = _opt_float(self.dgs20_c_lagged, trade_date)
+        dgs20_ref = _opt_float(self.dgs20_ref_lagged, trade_date)
+        dgs20_chg = _opt_float(self.dgs20_chg_lagged, trade_date)
+
+        obs_2y = self.dgs2_obs_lagged.get(trade_date, None)
+        obs_10y = self.us10y_obs_lagged.get(trade_date, None)
+        obs_6m = self.dgs6m_obs_lagged.get(trade_date, None)
+        obs_20y = self.dgs20_obs_lagged.get(trade_date, None)
+        dgs_obs_date = None
+        for cand in (obs_2y, obs_10y, obs_6m, obs_20y):
+            if cand is not None and not pd.isna(cand):
+                dgs_obs_date = str(cand)
+                break
+
+        # 3. T3 약세 및 거시위험 판정 (V2 6단계)
         t3_q_weak = cfg.use_t3_d80_filter and (pd_q0 < pd_q_t3ma)
         t3_m09_weak = cfg.use_t3_d80_filter and (
             t3_q_weak or (cfg.use_q06 and pd_q06_ready and pd_q06_er <= cfg.qqq_er10_thr)
@@ -504,7 +540,7 @@ class StrategyEngine:
         )
         t3_risk_off_zero_state = t3_short_rate_risk or t3_long_rate_risk
 
-        # 6. 선행 차단·기본비중·과열 단계 판정 (주석 2~10절 & 13절 순서)
+        # 4. V2 상태머신 단계별 판정 (1단계 ~ 5단계)
         s1_enter = cfg.overheat1_enter
         s1_exit = min(cfg.overheat1_exit, s1_enter - 0.01)
         s2_enter = max(cfg.overheat2_enter, s1_enter + 0.01)
@@ -513,8 +549,8 @@ class StrategyEngine:
         s3_exit = min(cfg.overheat3_exit, s3_enter - 0.01)
         s4_enter = max(cfg.overheat4_enter, s3_enter + 0.01)
         s4_exit = min(cfg.overheat4_exit, s4_enter - 0.01)
-        oh4_pre_buy_level = min(max(cfg.oh4_pre_release_buy_level, s4_exit + 0.01), s4_enter - 0.01)
 
+        # (1단계) VIX 카운터 갱신 (결측 시 vix_buy_support_days=5로 간주)
         pre_vix_risk_lock, pre_vix_below_cnt = K.next_vix_state(
             cfg.use_vix_filter,
             state.vix_risk_lock,
@@ -522,9 +558,12 @@ class StrategyEngine:
             pd_vc,
             cfg.vix_sell_threshold,
             cfg.vix_rebuy_threshold,
-            carry_only=(pd_vc is None),
+            carry_only=False,
+            default_below_cnt=cfg.vix_buy_support_days,
         )
         pre_vix_force_cash = cfg.use_vix_filter and cfg.use_vix_force_sell and pre_vix_risk_lock
+
+        # (2단계) 3대 강제 현금화(hard_cash): 20일 변동성 락, SPY 200일선 필터, 손절 후 RSI(<43) 재진입 잠금
         pre_locked = (pd_tv20 + 1e-10) >= max(cfg.vol_threshold, 1e-6)
 
         pre_spy_bull, pre_spy_inited, pre_spy_confirm_cnt = K.next_spy_state(
@@ -543,6 +582,7 @@ class StrategyEngine:
         pre_rsi_reentry_ok = pd_qqq_rsi_ready and (pd_qqq_rsi14 >= cfg.rsi_reentry_thr)
         pre_reentry_blocked = state.reentry_lock and (not pre_rsi_reentry_ok)
 
+        # (3단계) 기본 추세 비중(base0: 102.0% 진입 / 100.0% 이탈) 및 45일 기울기 부스트(slope_ok)
         pre_above200, pre_above200_inited = K.next_above200_state(
             state.above200_hysteresis,
             state.above200_hysteresis_inited,
@@ -572,6 +612,7 @@ class StrategyEngine:
         ungated_base_code = 2 if pre_slope_ok else pre_base0
         pre_base_code = 0 if pre_hard_cash else ungated_base_code
 
+        # (4단계) 과열 1~4단 분할매도 및 과열 4단 해제 가드(95%)
         prev_overheat_stage = state.overheat_stage
         ungated_overheat_stage = K.next_overheat_stage(
             prev_overheat_stage,
@@ -608,7 +649,7 @@ class StrategyEngine:
                 pre_oh4_reentry_guard = False
                 pre_oh4_slope_ok_cnt = 0
 
-        # 당일 원금 보호 손절 체크 (주석 9절)
+        # (5단계) 원금보호 로스컷(-7.0% 손절): 75% 이상 보유 중 진입 체결 시가 대비 93.0% 이하 시 즉시 손절
         pre_stop_hit = (
             cfg.use_stable_stops
             and K.is_high_exposure(prev_asset)
@@ -616,47 +657,12 @@ class StrategyEngine:
             and (pd_tc <= state.full_entry_close * cfg.principal_stop_pct)
         )
 
-        # ER20 및 O4B / O4P 판정 (주석 5·6·7절)
+        # 과열 단계별 비중 판정 (V2: 과열 4단은 O4B/O4P 예외 없이 무조건 0%)
         a2_oh12_strong = a2_er20_ready and (a2_er20 > cfg.tqqq_er20_thr)
-        a2_o4p_allow = a2_er59_ready and (a2_er59 >= cfg.qqq_er59_thr)
-        o4_partial_vol_ok = nas_vol_ready and a2_o4p_allow
-        o4_booster_cond_ok = (
-            cfg.use_overheat_split
-            and (pd_q_ret3 is not None)
-            and (cfg.o4_booster_min_dist <= dist200 <= cfg.o4_booster_max_dist)
-            and (pd_q_ret1 >= cfg.o4_booster_q_ret1_thr)
-            and (pd_q_ret3 >= 0.0)
-        )
-
-        ungated_o4_booster = (
-            cfg.use_overheat_split
-            and (ungated_overheat_stage == 4)
-            and (ungated_base_code != 0)
-            and o4_booster_cond_ok
-        )
-        ungated_o4_partial_structural = (
-            cfg.use_overheat_split
-            and (ungated_overheat_stage == 4)
-            and (ungated_base_code != 0)
-            and (dist200 <= oh4_pre_buy_level)
-        )
-        ungated_o4_partial_exec = (
-            ungated_o4_partial_structural
-            and o4_partial_vol_ok
-            and (not ungated_o4_booster)
-        )
-        o4_booster_exec_ok = (not pre_hard_cash) and ungated_o4_booster
-        o4_partial_exec_ok = (not pre_hard_cash) and ungated_o4_partial_exec
-
         ungated_pre_stop_code = ungated_base_code
         if cfg.use_overheat_split:
             if ungated_overheat_stage == 4:
-                if ungated_o4_booster:
-                    ungated_pre_stop_code = K.weight_to_code(cfg.o4_booster_pct)
-                elif ungated_o4_partial_exec:
-                    ungated_pre_stop_code = K.weight_to_code(cfg.oh4_pre_release_buy_pct)
-                else:
-                    ungated_pre_stop_code = 0
+                ungated_pre_stop_code = 0
             elif ungated_overheat_stage == 3:
                 ungated_pre_stop_code = 0 if ungated_base_code == 0 else 5
             elif ungated_overheat_stage == 2:
@@ -695,17 +701,7 @@ class StrategyEngine:
         before_t3_code = 0 if (pre_hard_cash or pre_stop_hit) else ungated_before_t3_code
         spy_filter_applied_flag = (not pre_hard_cash) and (not pre_stop_hit) and ungated_spy_cap_applied
         oh4_guard_applied_flag = (not pre_hard_cash) and (not pre_stop_hit) and ungated_oh4_cap_applied
-
-        before_t3_w = K.code_weight(before_t3_code)
-        before_t3_o4_role = (
-            2
-            if (before_t3_w > 1e-9 and before_t3_code == pre_stop_code and o4_booster_exec_ok)
-            else (
-                1
-                if (before_t3_w > 1e-9 and before_t3_code == pre_stop_code and o4_partial_exec_ok)
-                else 0
-            )
-        )
+        before_t3_o4_role = 0
 
         # 손절 상태 반영
         stop_event_flag = False
@@ -717,7 +713,7 @@ class StrategyEngine:
                 stop_event_reason = "리스크 관리(로스 컷)"
                 reentry_lock_next = True
 
-        # 7. T3 필터 적용
+        # (6단계) T3 거시 금리·달러 발작 필터 적용
         final_code = K.apply_t3_d80_filter(
             before_t3_code,
             cfg.use_t3_d80_filter,
@@ -734,7 +730,7 @@ class StrategyEngine:
             elif t3_q_weak:
                 t3_q_weak_cap_applied_flag = True
 
-        # 8. VIX 매수보조 증액 제한 (주석 10절)
+        # (7단계) VIX 5일 매수보조 제한
         prev_w_vix_assist = K.code_weight(prev_asset)
         final_w_vix_assist = K.code_weight(final_code)
         is_existing_upsize = (
@@ -754,57 +750,42 @@ class StrategyEngine:
             final_code = prev_asset
             vix_buy_support_blocked_flag = True
 
-        # 9. 최종 비중 및 O4 역할 확정
+        # (8~9단계) 최종 비중 확정 및 손절 기준가 갱신
         oh4_release_flag = (
             cfg.use_overheat_split
             and (prev_overheat_stage == 4)
             and (pre_overheat_stage != 4)
             and (K.code_weight(final_code) > K.code_weight(prev_asset) + 1e-9)
         )
-        o4_booster_target_w = K.code_weight(K.weight_to_code(cfg.o4_booster_pct))
-        o4_partial_target_w = K.code_weight(K.weight_to_code(cfg.oh4_pre_release_buy_pct))
-        o4_final_w = K.code_weight(final_code)
+        now_o4_role = 0
 
-        o4_booster_now = (
-            cfg.use_overheat_split
-            and (pre_overheat_stage == 4)
-            and o4_booster_exec_ok
-            and (o4_booster_target_w > 1e-9)
-            and (o4_final_w > 1e-9)
-            and (abs(o4_final_w - o4_booster_target_w) <= 0.0005)
-        )
-        o4_partial_now = (
-            cfg.use_overheat_split
-            and (pre_overheat_stage == 4)
-            and o4_partial_exec_ok
-            and (o4_partial_target_w > 1e-9)
-            and (o4_final_w > 1e-9)
-            and (abs(o4_final_w - o4_partial_target_w) <= 0.0005)
-        )
-        now_o4_role = K.o4_role_from_flags(o4_booster_now, o4_partial_now)
-
-        # 양수 목표 확정 시 재진입 잠금 해제 (주석 9절)
+        # 양수 목표 확정 시 재진입 잠금 해제
         if reentry_lock_next and (K.code_weight(final_code) > 1e-9):
             reentry_lock_next = False
 
         # 고비중(75% 이상) 진입/유지/이탈에 따른 원금보호 손절 기준가 갱신
+        # (당일 신규 진입 신호 시 임시로 당일 종가를 기록하고 pending_open_anchor=True로 설정하여 익일 시가로 확정)
         prev_high = K.is_high_exposure(prev_asset)
         now_high = K.is_high_exposure(final_code)
         full_entry_next = state.full_entry_close
         full_high_next = state.full_high_close
         last_stop_next = state.last_principal_stop_price
+        pending_open_next = state.pending_open_anchor
 
         if now_high and not prev_high:
             full_entry_next = pd_tc
             full_high_next = pd_tc
             last_stop_next = pd_tc * cfg.principal_stop_pct
+            pending_open_next = cfg.use_next_open_stop_anchor
         elif now_high and prev_high and full_entry_next is not None:
             full_high_next = max(full_high_next or pd_tc, pd_tc)
             last_stop_next = full_entry_next * cfg.principal_stop_pct
+            pending_open_next = False
         elif not now_high:
             full_entry_next = None
             full_high_next = None
             last_stop_next = None
+            pending_open_next = False
 
         # 평균 진입단가 추적
         prev_w_cb = K.code_weight(prev_asset)
@@ -818,41 +799,40 @@ class StrategyEngine:
             old_entry = pd_tc if pos_avg_next is None else pos_avg_next
             pos_avg_next = (old_entry * prev_w_cb + pd_tc * (now_w_cb - prev_w_cb)) / now_w_cb
 
-        # 10. D7 비TQQQ 자금 (단기채 / 현금) 배분 갱신 (주석 15절)
+        # 10. V2 원신호 비중 (d7_enabled=False 일 때 TQQQ + 현금으로만 구성)
         before_tq = prev_w_cb
-        before_bill = state.d7_bill_state
-        before_cash = max(0.0, 1.0 - before_tq - before_bill)
-
         d7_keys_next = list(state.d7_keys)
         d7_weights_next = list(state.d7_weights)
-        if trade_date in d7_keys_next:
-            idx_k = d7_keys_next.index(trade_date)
-            d7_weights_next[idx_k] = now_w_cb
+        if cfg.d7_enabled:
+            before_bill = state.d7_bill_state
+            before_cash = max(0.0, 1.0 - before_tq - before_bill)
+            if trade_date in d7_keys_next:
+                idx_k = d7_keys_next.index(trade_date)
+                d7_weights_next[idx_k] = now_w_cb
+            else:
+                d7_keys_next.append(trade_date)
+                d7_weights_next.append(now_w_cb)
+                if len(d7_keys_next) > 8:
+                    d7_keys_next.pop(0)
+                    d7_weights_next.pop(0)
+            d7_history_complete = len(d7_weights_next) >= 8
+            max_8d_tq = max(d7_weights_next) if d7_history_complete else 1.0
+            d7_cap = max(0.0, 1.0 - max_8d_tq)
+            target_bill, target_cash = K.d7_allocate(
+                before_bill,
+                now_w_cb,
+                d7_cap,
+                same_session=cfg.d7_same_session,
+            )
         else:
-            d7_keys_next.append(trade_date)
-            d7_weights_next.append(now_w_cb)
-            if len(d7_keys_next) > 8:
-                d7_keys_next.pop(0)
-                d7_weights_next.pop(0)
+            before_bill = 0.0
+            before_cash = max(0.0, 1.0 - before_tq)
+            target_bill = 0.0
+            target_cash = max(0.0, 1.0 - now_w_cb)
+            d7_cap = 0.0
+            d7_history_complete = True
 
-        d7_history_complete = len(d7_weights_next) >= 8
-        # 초기 8거래일 미만일 때는 누락 일자를 TQQQ 100%(1.0)로 보수 처리
-        max_8d_tq = max(d7_weights_next) if d7_history_complete else 1.0
-        d7_cap = max(0.0, 1.0 - max_8d_tq)
-        target_bill, target_cash = K.d7_allocate(
-            before_bill,
-            now_w_cb,
-            d7_cap,
-            same_session=cfg.d7_same_session,
-        )
-
-        # 11. 판정 사유(reason_text) 및 태그(tag_text) 구성 (composeSignalLabelReason 동일)
-        b_entry = (now_o4_role == 2) and (prev_o4_role != 2)
-        b_hold = (now_o4_role == 2) and (prev_o4_role == 2)
-        b_exit = (now_o4_role != 2) and (prev_o4_role == 2)
-        p_entry = (now_o4_role == 1) and (prev_o4_role != 1)
-        p_hold = (now_o4_role == 1) and (prev_o4_role == 1)
-        p_exit = (now_o4_role != 1) and (prev_o4_role == 1)
+        # 11. 판정 사유(reason_text) 및 태그(tag_text) 구성
         use_weight_change_label = (
             final_code != 0
             and final_code != 2
@@ -884,18 +864,6 @@ class StrategyEngine:
             tag_text = reason_text
         elif t3_q_weak_cap_applied_flag:
             reason_text, tag_text = t3_q_weak_reason_text, "T3cap"
-        elif b_hold:
-            reason_text, tag_text = "O4B 유지", "O4B 유지"
-        elif b_entry:
-            reason_text, tag_text = "O4B 진입", "O4B 진입"
-        elif b_exit:
-            reason_text, tag_text = "O4B 이탈", "O4B 이탈"
-        elif p_hold:
-            reason_text, tag_text = "O4P 유지", "O4P 유지"
-        elif p_entry:
-            reason_text, tag_text = "O4P 진입", "O4P 진입"
-        elif p_exit:
-            reason_text, tag_text = "O4P 이탈", "O4P 이탈"
         elif oh4_guard_applied_flag:
             reason_text, tag_text = "리스크 관리(과열 4차 재진입 가드)", "과열가드"
         elif cap_binding:
@@ -910,7 +878,7 @@ class StrategyEngine:
             else:
                 reason_text, tag_text = "추세 조건 불만족", ""
 
-        # 12. 익일 QQQ T3 기준가 (매수/매도 경계) 역산 (주석 17절)
+        # 12. 익일 QQQ T3 기준가 (매수/매도 경계) 역산
         q9_val = self.q_er10_q9.get(trade_date, np.nan)
         abs9_val = self.q_er10_abs9.get(trade_date, np.nan)
         next_ma_val = self.q_next_ma.get(trade_date, np.nan)
@@ -968,10 +936,11 @@ class StrategyEngine:
             full_entry_close=full_entry_next,
             full_high_close=full_high_next,
             last_principal_stop_price=last_stop_next,
+            pending_open_anchor=pending_open_next,
             oh4_reentry_guard=pre_oh4_reentry_guard,
             oh4_slope_ok_cnt=pre_oh4_slope_ok_cnt,
-            oh4_pre_release_active=(now_o4_role == 1),
-            o4_booster_active=(now_o4_role == 2),
+            oh4_pre_release_active=False,
+            o4_booster_active=False,
             pos_entry_avg_close=pos_avg_next,
             reentry_lock=reentry_lock_next,
             spy_bull=pre_spy_bull,
@@ -1027,8 +996,8 @@ class StrategyEngine:
             prev_overheat_stage=prev_overheat_stage,
             oh4_reentry_guard=pre_oh4_reentry_guard,
             oh4_slope_ok_cnt=pre_oh4_slope_ok_cnt,
-            o4_booster_ok=(pre_overheat_stage == 4 and o4_booster_cond_ok),
-            o4_partial_ok=(pre_overheat_stage == 4 and dist200 <= oh4_pre_buy_level and o4_partial_vol_ok),
+            o4_booster_ok=False,
+            o4_partial_ok=False,
             principal_stop_price=last_stop_next,
             pos_entry_avg_close=pos_avg_next,
             reentry_lock=reentry_lock_next,
@@ -1083,6 +1052,12 @@ class StrategyEngine:
             usdkrw_c=usdkrw_c,
             usdkrw_p=usdkrw_p,
             border_warnings=border_warnings,
+            ytd_ret_pct=getattr(self, "_cached_perf", {}).get("ytd_ret_pct"),
+            tqqq_ytd_pct=getattr(self, "_cached_perf", {}).get("tqqq_ytd_pct"),
+            ret_3m_pct=getattr(self, "_cached_perf", {}).get("ret_3m_pct"),
+            tqqq_3m_pct=getattr(self, "_cached_perf", {}).get("tqqq_3m_pct"),
+            mtd_ret_pct=getattr(self, "_cached_perf", {}).get("mtd_ret_pct"),
+            tqqq_mtd_pct=getattr(self, "_cached_perf", {}).get("tqqq_mtd_pct"),
         )
 
         return next_state, snapshot
@@ -1090,9 +1065,9 @@ class StrategyEngine:
     def replay_up_to(self, target_date: str) -> Tuple[DayState, DayState, DecisionSnapshot]:
         """
         전체 과거 거래일을 순차 재생하여:
-        1) target_date 직전까지의 상태(pre_day_state = c084DayStart)
+        1) target_date 직전까지의 상태(pre_day_state)
         2) target_date 당일 판정 후 상태(post_day_state)
-        3) target_date 판정 스냅샷(snapshot)
+        3) target_date 판정 스냅샷(snapshot, YTD/3M/MTD 수익률 포함)
         을 반환합니다.
         """
         if not self.valid_dates:
@@ -1104,8 +1079,59 @@ class StrategyEngine:
         pre_day_state = DayState()
         last_snap: Optional[DecisionSnapshot] = None
 
-        for d in self.valid_dates:
+        # 일별 V2 전략 누적 자산곡선(eq, 익일 시가 체결 반영) 및 TQQQ 종가 기록
+        tqqq_sh = 0.0
+        usd = 1.0
+        prev_target_w: Optional[float] = None
+        pending_sig_w = 0.0
+        c = 0.0003  # 편도 3bp
+        eq_by_date: Dict[str, float] = {}
+        tc_by_date: Dict[str, float] = {}
+        replayed_dates: List[str] = []
+
+        for i, d in enumerate(self.valid_dates):
+            tc_now = float(self.bundle.tqqq_close.loc[d])
+            to_now = (
+                float(self.bundle.tqqq_open.loc[d])
+                if (self.bundle.tqqq_open is not None and d in self.bundle.tqqq_open.index)
+                else tc_now
+            )
+            if i > 0 and to_now > 0:
+                should_rebal = (prev_target_w is None) or (abs(pending_sig_w - prev_target_w) > 1e-9)
+                if should_rebal:
+                    pre_open = tqqq_sh * to_now + usd
+                    cur_w = (tqqq_sh * to_now) / pre_open if pre_open > 0 else 0.0
+                    turnover = abs(pending_sig_w - cur_w)
+                    post_open = pre_open * (1.0 - c * turnover) / (1.0 - c * pending_sig_w)
+                    tqqq_sh = (post_open * pending_sig_w) / to_now
+                    usd = post_open * (1.0 - pending_sig_w)
+                    prev_target_w = pending_sig_w
+
+            eq_close = tqqq_sh * tc_now + usd
+            eq_by_date[d] = eq_close
+            tc_by_date[d] = tc_now
+            replayed_dates.append(d)
+
             if d == target_date:
+                cur_year = target_date[:4]
+                cur_ym = target_date[:7]
+                prev_year_dates = [x for x in replayed_dates if x[:4] < cur_year]
+                prev_month_dates = [x for x in replayed_dates if x[:7] < cur_ym]
+
+                base_ytd_d = prev_year_dates[-1] if prev_year_dates else replayed_dates[0]
+                base_mtd_d = prev_month_dates[-1] if prev_month_dates else replayed_dates[0]
+                idx_3m = max(0, len(replayed_dates) - 1 - 63)
+                base_3m_d = replayed_dates[idx_3m]
+
+                self._cached_perf = {
+                    "ytd_ret_pct": ((eq_by_date[target_date] / eq_by_date[base_ytd_d]) - 1.0) * 100.0,
+                    "tqqq_ytd_pct": ((tc_by_date[target_date] / tc_by_date[base_ytd_d]) - 1.0) * 100.0,
+                    "ret_3m_pct": ((eq_by_date[target_date] / eq_by_date[base_3m_d]) - 1.0) * 100.0,
+                    "tqqq_3m_pct": ((tc_by_date[target_date] / tc_by_date[base_3m_d]) - 1.0) * 100.0,
+                    "mtd_ret_pct": ((eq_by_date[target_date] / eq_by_date[base_mtd_d]) - 1.0) * 100.0,
+                    "tqqq_mtd_pct": ((tc_by_date[target_date] / tc_by_date[base_mtd_d]) - 1.0) * 100.0,
+                }
+
                 pre_day_state = copy.deepcopy(state)
                 state, last_snap = self.step_one_day(
                     pre_day_state, d, phase="PRIMARY", is_latest_day=True
@@ -1113,6 +1139,7 @@ class StrategyEngine:
                 break
             else:
                 state, _ = self.step_one_day(state, d, phase="HISTORY", is_latest_day=False)
+                pending_sig_w = K.code_weight(state.asset_code)
 
         assert last_snap is not None
         return pre_day_state, state, last_snap

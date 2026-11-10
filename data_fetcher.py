@@ -1,5 +1,5 @@
 """
-김째매매법 원천 데이터 수집기 (Data Fetcher)
+변형티큐법 원천 데이터 수집기 (Data Fetcher)
 - Yahoo Finance (yfinance): TQQQ, QQQ(배당조정/분할조정), SPY, ^IXIC, ^VIX(일봉+5분봉), DX-Y.NYB(일봉+1시간봉), KRW=X
 - FRED 공식 CSV 엔드포인트: DGS6MO, DGS2, DGS10, DGS20 (별도 API 키 불필요)
 """
@@ -25,12 +25,12 @@ ET_TZ = pytz.timezone("America/New_York")
 
 @dataclass
 class MarketDataBundle:
-    # 일봉 종가 시리즈 (배당조정, 인덱스는 YYYY-MM-DD 문자열 또는 Timestamp)
+    # 일봉 종가/시가 시리즈 (배당조정, 인덱스는 YYYY-MM-DD 문자열 또는 Timestamp)
     tqqq_close: pd.Series
     tqqq_high: pd.Series
     tqqq_low: pd.Series
     qqq_close: pd.Series
-    qqq_rsi_close: pd.Series     # 분할조정(splits only) QQQ 종가
+    qqq_rsi_close: pd.Series     # 분할조정(splits only) 또는 배당조정 QQQ 종가
     spy_close: pd.Series
     ixic_volume: pd.Series
     vix_close: pd.Series
@@ -48,6 +48,9 @@ class MarketDataBundle:
     dxy_cohort_a_current: Optional[float]
     dxy_cohort_a_ref: Optional[float]
     dxy_cohort_a_date: Optional[str]
+
+    # V2 원금보호 손절 기준가(익일 시가 체결 기준) 산출용 TQQQ 수정시가
+    tqqq_open: Optional[pd.Series] = None
 
 
 def _normalize_date_index(series: pd.Series) -> pd.Series:
@@ -318,4 +321,5 @@ def fetch_all_market_data(cfg: StrategyConfig = DEFAULT_CONFIG) -> MarketDataBun
         dxy_cohort_a_current=dxy_a_c,
         dxy_cohort_a_ref=dxy_a_ref,
         dxy_cohort_a_date=dxy_a_date,
+        tqqq_open=_normalize_date_index(df_tqqq["Open"]),
     )

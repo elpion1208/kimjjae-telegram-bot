@@ -1,5 +1,5 @@
 """
-김째매매법 핵심 연산 커널 및 표시 포맷 헬퍼
+변형티큐법 핵심 연산 커널 및 표시 포맷 헬퍼
 Pine Script의 KimJjaeDecisionKernel(K), KimJjaeBoardDisplay(boardDisplay) 및 수학 헬퍼 함수를 구현합니다.
 """
 
@@ -103,16 +103,7 @@ def calc_sample_stdev_series(series: pd.Series, length: int) -> pd.Series:
 def calc_linreg_slope_series(dist_series: pd.Series, length: int) -> pd.Series:
     """
     Pine Script dailyDistSlope(src, maLen, len):
-    lrNow = ta.linreg(d, len, 0)
-    lrPrev = ta.linreg(d, len, 1)
-    lrNow - lrPrev
-    (주의: Pine Script에서 linreg(d, len, 0) - linreg(d, len, 1)이 아니라
-     코드 정의상:
-       lrNow = ta.linreg(d, len, 0)
-       lrPrev = ta.linreg(d, len, 1)
-     Pine의 ta.linreg(src, len, offset)은 현재 창(최근 len개)의 회귀직선에서
-     offset=0(마지막 점)과 offset=1(직전 점)의 값이므로,
-     그 차이는 정확히 현재 창(len개)의 선형회귀 기울기(slope)와 동일합니다!)
+    최근 len개 구간의 선형회귀 기울기(slope)
     """
     x = np.arange(length, dtype=float)
     x_mean = x.mean()
@@ -147,7 +138,6 @@ def calc_rsi_wilder_series(close_series: pd.Series, length: int = 14) -> pd.Seri
     ad = np.nan
     alpha = 1.0 / float(length)
 
-    # 첫 유효 변화량 시작 위치 탐색
     valid_idxs = np.where(~np.isnan(diff))[0]
     if len(valid_idxs) < length:
         return pd.Series(rsi, index=close_series.index)
@@ -179,11 +169,8 @@ def calc_rsi_wilder_series(close_series: pd.Series, length: int = 14) -> pd.Seri
 
 def calc_er_series(close_series: pd.Series, length: int) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """
-    주석 5절 ER 공통 정의:
+    ER 공통 정의:
     ER_N = ln(P_t / P_{t-N}) / sum_{i=t-N+1..t} |ln(P_i / P_{i-1})|
-    반환값:
-      (er_series, tail_price_series [close[n-1]], abs_tail_series [최근 n-1개 변화량 절대값 합])
-      -> 익일 기준가 역산(q06NextTicks / a2NextEr)에 그대로 사용됩니다.
     """
     vals = close_series.to_numpy(dtype=float)
     n = len(vals)
@@ -192,14 +179,13 @@ def calc_er_series(close_series: pd.Series, length: int) -> Tuple[pd.Series, pd.
     abs_tail_out = np.full(n, np.nan, dtype=float)
 
     for i in range(length, n):
-        window = vals[i - length : i + 1]  # length + 1 개 종가 (P_{t-N} .. P_t)
+        window = vals[i - length : i + 1]
         if np.isnan(window).any() or np.any(window <= 0):
             continue
-        log_moves = np.abs(np.log(window[1:] / window[:-1]))  # length 개 일간 로그변화 절대값
+        log_moves = np.abs(np.log(window[1:] / window[:-1]))
         total_abs = float(np.sum(log_moves))
-        # j = 0 .. length-2 (즉 최근 length-1 개 일간 변화량의 합 = abs9 / absTail)
         abs_tail = float(np.sum(log_moves[1:]))
-        tail_price = float(vals[i - (length - 1)])  # close[n-1]
+        tail_price = float(vals[i - (length - 1)])
         net_log = math.log(vals[i] / vals[i - length])
         er_val = 0.0 if total_abs == 0.0 else (net_log / total_abs)
 
@@ -220,7 +206,6 @@ def q06_next_weak(p_q0: float, p_q9: float, p_abs9: float, p_next_ma: float, pri
     move = math.log(price / p_q0)
     den = p_abs9 + abs(move)
     er = 0.0 if den == 0.0 else math.log(price / p_q9) / den
-    # p_next_ma는 (close[0] + close[1]) / 2 이며, 익일 SMA3 < price 는 price < (close[0]+close[1]+price)/3 과 동치이므로 price < p_next_ma 와 정확히 일치
     return (price < p_next_ma) or (er <= -0.3)
 
 
@@ -232,7 +217,6 @@ def q06_next_ticks(
     p_tick: float = 0.01,
 ) -> Tuple[Optional[float], Optional[float]]:
     """
-    주석 17절 & q06NextTicks:
     익일 QQQ의 T3 약세/해제 경계가 되는 매수 기준가(buy: 약세 해제 첫 가격)와
     매도 기준가(sell: 약세 유지 마지막 가격)를 최소호가(0.01달러) 단위로 계산합니다.
     """
@@ -278,9 +262,8 @@ def next_above200_state(
     exit_band: float,
 ) -> Tuple[bool, bool]:
     """
-    주석 2절:
-    TQQQ 이격도 >= 102.27이면 상향 상태가 켜지고, <= 100.28이면 꺼집니다. 그 사이는 직전 상태를 유지합니다.
-    단, 아직 초기화되지 않았다면 이격도 >= 102.27일 때만 상향으로 시작합니다.
+    V2 명세서 3단계:
+    TQQQ 이격도 >= 102.0이면 상향 상태가 켜지고, <= 100.0이면 꺼집니다. 그 사이는 직전 상태를 유지합니다.
     """
     if dist200 is None or math.isnan(dist200):
         return prev_state, prev_inited
@@ -305,9 +288,7 @@ def next_spy_state(
     confirm_days: int,
 ) -> Tuple[bool, bool, int]:
     """
-    주석 10절:
     SPY 이격도 <= 95.70이면 하락 상태, >= 96.50이면 상승 상태로 전환하며 기본 확인일수는 1회입니다.
-    두 경계 사이에서는 기존 상태를 유지하지만, 최초 초기화는 >= 96.50인 경우만 상승입니다.
     """
     if not use_spy_filter:
         return True, True, 0
@@ -343,16 +324,19 @@ def next_vix_state(
     sell_thr: float,
     rebuy_thr: float,
     carry_only: bool = False,
+    default_below_cnt: int = 5,
 ) -> Tuple[bool, int]:
     """
-    주석 10절:
+    V2 명세서 1단계:
     VIX <= 31인 연속 일봉 확인횟수를 카운트하며 VIX > 31이면 0으로 초기화합니다.
-    VIX 위험 락은 >= 46에서 켜지고 <= 31에서 해제됩니다.
+    VIX 결측 시 V2 명세서에 따라 연속 확인일수를 default_below_cnt(5일)로 간주합니다.
     """
     if not use_vix_filter:
         return False, 0
-    if carry_only or vix_close is None or math.isnan(vix_close):
-        return prev_lock, prev_below_cnt
+    if vix_close is None or math.isnan(vix_close):
+        if carry_only:
+            return prev_lock, prev_below_cnt
+        return prev_lock, default_below_cnt
 
     if prev_lock:
         lock = False if vix_close <= rebuy_thr else True
@@ -379,11 +363,10 @@ def next_overheat_stage(
     s4_exit: float,
 ) -> int:
     """
-    주석 4절 과열 단계 전이 규칙:
+    과열 단계 전이 규칙:
     - 기존 4단에서는 이격도가 결측이면 4단을 유지하고, 유효값이 <= 118(s4_exit)일 때 0단으로 해제합니다.
-    - 일반 상태 전이에서는 기본 100%(ungated_base_code == 2)일 때 신규 진입을 판정합니다.
-      진입 경계: 1단 140 / 2단 144 / 3단 147 / 4단 158 이상.
-    - 기존 1~3단은 상승 시 더 높은 단계로 건너뛸 수 있고, 하락 시 132 / 138 / 140 이하의 해제 경계에 따라 낮아집니다.
+    - 진입 경계: 1단 140 / 2단 144 / 3단 147 / 4단 158 이상.
+    - 하락 해제 경계: 132 / 138 / 140 / 118 이하.
     """
     if not use_overheat_split:
         return 0
@@ -398,7 +381,6 @@ def next_overheat_stage(
         return prev_stage
 
     stage = prev_stage
-    # 하락 시 단계적 해제 확인 (3단 -> 2단 -> 1단 -> 0단)
     if stage == 3 and dist200 <= s3_exit:
         stage = 2
     if stage == 2 and dist200 <= s2_exit:
@@ -406,7 +388,6 @@ def next_overheat_stage(
     if stage == 1 and dist200 <= s1_exit:
         stage = 0
 
-    # 상승 시 진입/승격 확인 (기본비중 100%이거나 이미 1~3단 과열 상태일 때 상위 단계 진입)
     can_enter_or_promote = (ungated_base_code == 2) or (stage > 0)
     if can_enter_or_promote:
         if dist200 >= s4_enter:
@@ -430,9 +411,7 @@ def apply_t3_d80_filter(
     t3_q_weak_cap: float,
 ) -> int:
     """
-    주석 11·12절:
-    - T3 강한위험(약세 AND (SR OR (DXY AND LR)))이면 목표비중 0%
-    - 독립 80% 상한(enable_t3_cap)이 켜져 있고 QQQ 단기약세이면 80% 상한 적용
+    T3 강한위험(약세 AND (SR OR (DXY AND LR)))이면 목표비중 0%
     """
     if not use_t3_filter:
         return before_t3_code
@@ -447,7 +426,7 @@ def apply_t3_d80_filter(
 
 
 # ============================================================
-# 4. D7 비TQQQ 자금 (단기채 / 현금 분리) 계산 (주석 15절)
+# 4. D7 비TQQQ 자금 (단기채 / 현금 분리) 계산
 # ============================================================
 
 def d7_allocate(
@@ -456,10 +435,6 @@ def d7_allocate(
     capacity: float,
     same_session: bool = True,
 ) -> Tuple[float, float]:
-    """
-    Pine Script d7Allocate(previousBill, weight, capacity, sameSession) 100% 동일 구현:
-    1/1000 정수 단위로 단기채(SGOV 등)와 현금 비중을 배분합니다.
-    """
     weight_units = int(round(weight * 1000.0))
     previous_units = int(round(previous_bill * 1000.0))
     capacity_units = int(round(capacity * 1000.0))
@@ -467,14 +442,14 @@ def d7_allocate(
     bill_units = min(max(previous_units, 0), 1000 - weight_units)
     cash_units = 1000 - weight_units - bill_units
     addition_units = min(max(0, capacity_units - bill_units), cash_units)
-    if same_session and addition_units >= 5:  # 추가분 0.5%p 이상일 때만 신규 편입
+    if same_session and addition_units >= 5:
         bill_units += addition_units
     cash_units = 1000 - weight_units - bill_units
     return bill_units / 1000.0, cash_units / 1000.0
 
 
 # ============================================================
-# 5. 표시 및 텔레그램 문자열 포맷 헬퍼 (boardDisplay.* 대응)
+# 5. 표시 및 텔레그램 문자열 포맷 헬퍼
 # ============================================================
 
 def d7_pct_str(weight: float) -> str:
@@ -502,8 +477,11 @@ def alert_pos_icon(code: int, o4_role: int = 0) -> str:
 def asset_name_alert(code: int) -> str:
     w = code_weight(code)
     if w <= 1e-9:
-        return "현금(SGOV, BOXX)"
-    return f"TQQQ({code_pct_str(code)}%)"
+        return "TQQQ(0%) · 현금(100%)"
+    if w >= 1.0 - 1e-9:
+        return "TQQQ(100%)"
+    cash_code = weight_to_code(max(0.0, 1.0 - w))
+    return f"TQQQ({code_pct_str(code)}%) · 현금({code_pct_str(cash_code)}%)"
 
 
 def d7_breakdown(
@@ -525,7 +503,7 @@ def d7_breakdown(
 
 
 def alert_underline_position(pos_value: str) -> str:
-    """Pine Script alertUnderlinePosition 동일 구현"""
+    """목표 포지션 밑줄(<u>) 강조"""
     marked = pos_value.replace("%)", "%)</u>")
     marked = marked.replace("TQ(", "<u>TQ(")
     marked = marked.replace("TQQQ(", "<u>TQQQ(")
@@ -551,9 +529,9 @@ def dir_emoji(curr: Optional[float], prev: Optional[float]) -> str:
     if curr is None or prev is None or math.isnan(curr) or math.isnan(prev):
         return "⬜"
     if curr > prev:
-        return "🟥"  # 상승 양봉(한국식 빨강) 또는 상승 표시
+        return "🟥"
     if curr < prev:
-        return "🟦"  # 하락 음봉
+        return "🟦"
     return "⬜"
 
 
