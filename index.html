@@ -207,10 +207,8 @@
     function fmtBreakdown(tq, bill, cash) {
       const parts = [];
       const tqPct = Math.round((tq || 0) * 1000) / 10;
-      const billPct = Math.round((bill || 0) * 1000) / 10;
-      const cashPct = Math.round((cash || 0) * 1000) / 10;
+      const cashPct = Math.round((1.0 - (tq || 0)) * 1000) / 10;
       if (tqPct > 0) parts.push(`TQQQ ${tqPct}%`);
-      if (billPct > 0) parts.push(`단기채 ${billPct}%`);
       if (cashPct > 0 || parts.length === 0) parts.push(`현금 ${cashPct}%`);
       return parts.join(" | ");
     }
@@ -290,7 +288,7 @@
           stopBadge.textContent = `${stopDist >= 0 ? "+" : ""}${stopDist.toFixed(1)}%`;
           stopBadge.className = "absolute -top-1.5 right-2 px-2 py-0.5 rounded-full bg-[#E41E2A] text-white text-xs font-extrabold shadow-sm";
         } else {
-          document.getElementById("q-stop").textContent = "102.3%";
+          document.getElementById("q-stop").textContent = "102.0%";
           document.getElementById("q-stop-label").textContent = "200일 돌파목표";
           stopBadge.textContent = s.reentry_lock ? "RSI잠금" : "재진입";
           stopBadge.className = "absolute -top-1.5 right-2 px-2 py-0.5 rounded-full bg-zinc-900 text-white text-xs font-extrabold shadow-sm";
