@@ -1100,9 +1100,13 @@ class StrategyEngine:
                 should_rebal = (prev_target_w is None) or (abs(pending_sig_w - prev_target_w) > 1e-9)
                 if should_rebal:
                     pre_open = tqqq_sh * to_now + usd
-                    cur_w = (tqqq_sh * to_now) / pre_open if pre_open > 0 else 0.0
-                    turnover = abs(pending_sig_w - cur_w)
-                    post_open = pre_open * (1.0 - c * turnover) / (1.0 - c * pending_sig_w)
+                    cur_val = tqqq_sh * to_now
+                    # 거래비용: 매수·매도 모두 거래대금의 c(편도 3bp)를 낸다 (TG전략 backtest.simulate와 같은 규칙).
+                    # 체결 후 자산 A는  A + c·|A·w − 현재 TQQQ 평가액| = 체결 전 자산  을 만족한다.
+                    # (이전 공식은 현금에서 TQQQ로 들어갈 때 매수 비용이 0으로 계산됐다.)
+                    post_open = (pre_open + c * cur_val) / (1.0 + c * pending_sig_w)  # 매수라고 가정
+                    if post_open * pending_sig_w < cur_val:  # 실제로는 매도
+                        post_open = (pre_open - c * cur_val) / (1.0 - c * pending_sig_w)
                     tqqq_sh = (post_open * pending_sig_w) / to_now
                     usd = post_open * (1.0 - pending_sig_w)
                     prev_target_w = pending_sig_w
