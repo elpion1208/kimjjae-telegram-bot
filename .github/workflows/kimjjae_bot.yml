@@ -1,19 +1,12 @@
 name: 변형티큐법 텔레그램 알림 봇
 
 on:
-  schedule:
-    # ------------------------------------------------------------------
-    # [V2 전략: 하루 1회 정규장 마감 직후 발송 (cron-job.org 백업용 단일 스케줄)]
-    # - 서머타임(EDT, 3월~11월): 20:05 UTC (05:05 KST)
-    # - 동절기(EST, 11월~3월): 21:05 UTC (06:05 KST)
-    # - 조기마감일(13:00 ET): 17:05 / 18:05 UTC
-    # ※ 이미 cron-job.org가 06:05 KST에 1회 발송을 완료하면 main.py가 즉시 스킵합니다.
-    # ------------------------------------------------------------------
-    - cron: '5 20 * * 1-5'
-    - cron: '5 21 * * 1-5'
-    - cron: '5 17 * * 1-5'
-    - cron: '5 18 * * 1-5'
-
+  # ──────────────────────────────────────────────────────────────────
+  # [2026-11-11 중지] 이 봇의 리포트는 tg-strategy의 통합 리포트(TG전략 + 변형티큐)로 합쳐졌다.
+  # - 예약 실행(schedule)을 제거했다. 이전 cron: '5 20', '5 21', '5 17', '5 18' (* * 1-5, UTC)
+  # - cron-job.org 등 외부 호출(workflow_dispatch)은 아래 revive 입력 없이는 아무것도 실행하지 않는다.
+  # 되살리려면: schedule 블록을 복구하고 run-strategy 작업의 if 조건을 지운다.
+  # ──────────────────────────────────────────────────────────────────
   # GitHub 웹사이트 Actions 탭 및 cron-job.org API 호출에서 언제든 실행 가능
   workflow_dispatch:
     inputs:
@@ -32,6 +25,11 @@ on:
         required: false
         default: false
         type: boolean
+      revive:
+        description: '중지된 봇을 이번 한 번만 실행 (통합 리포트로 대체됨 — 평소엔 끄기)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -43,6 +41,8 @@ concurrency:
 
 jobs:
   run-strategy:
+    # 중지됨: revive 입력을 켠 수동 실행만 동작한다. 외부 예약 호출은 건너뛴다.
+    if: ${{ inputs.revive == true }}
     runs-on: ubuntu-latest
 
     steps:
